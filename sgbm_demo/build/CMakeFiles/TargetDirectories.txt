@@ -1,3 +1,0 @@
-/usr/share/xvsdk/sgbm_demo/build/CMakeFiles/rebuild_cache.dir
-/usr/share/xvsdk/sgbm_demo/build/CMakeFiles/edit_cache.dir
-/usr/share/xvsdk/sgbm_demo/build/CMakeFiles/sgbm_demo_stream.dir

@@ -4,15 +4,17 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/usr/include/pcl-1.10",
+                // "/usr/include/pcl-1.10",
                 "/usr/include",
                 "/usr/include/**",
-                "/usr/include/flann",
+                "/usr/include/xvsdk/",
+                "/usr/share/xvsdk/",
+                // "/usr/include/flann",
                 "/usr/include/eigen3",
                 "/usr/include/boost",
                 "/usr/include/eigen3/Eigen/",
-                "/usr/include/vtk-7.1",
-                "/usr/include/mysql",
+                // "/usr/include/vtk-7.1",
+                // "/usr/include/mysql",
                 "/usr/include/eigen3"
             ],
             "defines": [

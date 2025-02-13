@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 project(study)
-set(SRCS open_rgb.cpp)
+set(SRCS study.cpp)
 
 if ( WIN32 )
     set(xvsdk_DIR "../../cmake/xvsdk")
