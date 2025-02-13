@@ -1,0 +1,14 @@
+/home/gym/code/xvsdk/build/CMakeFiles/rebuild_cache.dir
+/home/gym/code/xvsdk/build/CMakeFiles/edit_cache.dir
+/home/gym/code/xvsdk/build/all_stream/CMakeFiles/rebuild_cache.dir
+/home/gym/code/xvsdk/build/all_stream/CMakeFiles/edit_cache.dir
+/home/gym/code/xvsdk/build/all_stream/CMakeFiles/all_stream.dir
+/home/gym/code/xvsdk/build/read_calibration/CMakeFiles/rebuild_cache.dir
+/home/gym/code/xvsdk/build/read_calibration/CMakeFiles/edit_cache.dir
+/home/gym/code/xvsdk/build/read_calibration/CMakeFiles/read_calibration.dir
+/home/gym/code/xvsdk/build/object_detection/CMakeFiles/rebuild_cache.dir
+/home/gym/code/xvsdk/build/object_detection/CMakeFiles/edit_cache.dir
+/home/gym/code/xvsdk/build/object_detection/CMakeFiles/object_detection.dir
+/home/gym/code/xvsdk/build/cnn_on_rgb_and_slam/CMakeFiles/rebuild_cache.dir
+/home/gym/code/xvsdk/build/cnn_on_rgb_and_slam/CMakeFiles/edit_cache.dir
+/home/gym/code/xvsdk/build/cnn_on_rgb_and_slam/CMakeFiles/cnn_on_rgb_and_slam.dir

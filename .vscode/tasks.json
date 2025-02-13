@@ -1,0 +1,134 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        // {
+        //     "label": "compile gcc",
+        //     "command": "gcc", // C语言编译器
+        //     "args": [
+        //         "-g",
+        //         "${file}",
+        //         "-o",
+        //         "${fileDirname}/${fileBasenameNoExtension}"
+        //     ],
+        //     "problemMatcher": {
+        //         "owner": "cpp",
+        //         "fileLocation": [
+        //             "relative",
+        //             "${workspaceRoot}"
+        //         ],
+        //         "pattern": {
+        //             "regexp": "^(.*):(\\d+):(\\d+):\\s+(warning|error):\\s+(.*)$",
+        //             "file": 1,
+        //             "line": 2,
+        //             "column": 3,
+        //             "severity": 4,
+        //             "message": 5
+        //         }
+        //     },
+        //     "group": "build"
+        // },
+        {
+            "type": "cppbuild",
+            "label": "build-release",
+            "command": "/usr/bin/g++",
+            "args": [
+                "-O2",
+                "-fdiagnostics-color=always",
+                "${file}",
+                // "*.cpp",
+                "-o",
+                "${workspaceFolder}/../build/${workspaceFolderBasename}/${fileBasenameNoExtension}_release"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "调试器生成的任务。"
+        },
+        {
+            "type": "cppbuild",
+            "label": "build-debug",
+            "command": "/usr/bin/g++",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                "${file}",
+                // "*.cpp",
+                "-o",
+                "${workspaceFolder}/../build/${workspaceFolderBasename}/${fileBasenameNoExtension}_debug"
+            ],
+            "options": {
+                "cwd": "${fileDirname}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "detail": "调试器生成的任务。"
+        },
+        {
+            "label": "build-release-2", //编译的项目名，build
+            "type": "shell",
+            // "command": "mkdir ${fileDirname}/build ;cd ${fileDirname}/build ;cmake ..  ;make", //编译命令
+            "command": "mkdir -p ${workspaceFolder}/../build/${workspaceFolderBasename}/${relativeFileDirname} ;/usr/bin/g++ -O2 -fdiagnostics-color=always ${fileDirname}/${fileBasename} -o ${workspaceFolder}/../build/${workspaceFolderBasename}/${relativeFileDirname}/${fileBasenameNoExtension}_release", //编译命令
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "build-debug-2", //编译的项目名，build
+            "type": "shell",
+            // "command": "mkdir ${fileDirname}/build ;cd ${fileDirname}/build ;cmake ..  ;make", //编译命令
+            "command": "mkdir -p ${workspaceFolder}/../build/${workspaceFolderBasename}/${relativeFileDirname} ;/usr/bin/g++ -fdiagnostics-color=always -g ${fileDirname}/${fileBasename} -o ${workspaceFolder}/../build/${workspaceFolderBasename}/${relativeFileDirname}/${fileBasenameNoExtension}_debug", //编译命令
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        // See https://go.microsoft.com/fwlink/?LinkId=733558
+        // for the documentation about the tasks.json format
+        {
+            "label": "make pcl", //编译的项目名，build
+            "type": "shell",
+            "command": "bash setup.sh; cd ../build ;cmake ../MyCppProject -DCMAKE_EXPORT_COMPILE_COMMANDS=1 ;make", //编译命令
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "make-external", //编译的项目名，build
+            "type": "shell",
+            // "command": "mkdir ${fileDirname}/build ;cd ${fileDirname}/build ;cmake ..  ;make", //编译命令
+            "command": "mkdir -p ${workspaceFolder}/../build/${workspaceFolderBasename}/${relativeFileDirname} ;cd ${workspaceFolder}/../build/${workspaceFolderBasename}/${relativeFileDirname} ;cmake ${fileDirname}  ;make -j16", //编译命令
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "make build", //编译的项目名，build
+            "type": "shell",
+            "command": "mkdir ${fileDirname}/build ;cd ${fileDirname}/build ;cmake ..  ;make", //编译命令
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "label": "clean",
+            "type": "shell",
+            "command": "make clean",
+        }
+    ]
+}

@@ -1,0 +1,30 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/include/pcl-1.10",
+                "/usr/include",
+                "/usr/include/**",
+                "/usr/include/flann",
+                "/usr/include/eigen3",
+                "/usr/include/boost",
+                "/usr/include/eigen3/Eigen/",
+                "/usr/include/vtk-7.1",
+                "/usr/include/mysql",
+                "/usr/include/eigen3"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "/usr/bin/g++",
+            "cStandard": "c17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
