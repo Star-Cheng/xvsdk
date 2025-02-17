@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 
 project(study)
 set(SRCS study.cpp)
-
+set(CMAKE_BUILD_TYPE Debug)
 if ( WIN32 )
     set(xvsdk_DIR "../../cmake/xvsdk")
 endif()
