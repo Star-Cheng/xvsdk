@@ -1,25 +1,39 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 2.5)  
+project(study)  
 
-project(study)
-set(SRCS study.cpp)
-set(CMAKE_BUILD_TYPE Debug)
-if ( WIN32 )
-    set(xvsdk_DIR "../../cmake/xvsdk")
-endif()
-find_package( xvsdk REQUIRED )
-set(xvsdk_INCLUDE ${xvsdk_INCLUDE_DIRS}/xvsdk})
-include_directories( ${xvsdk_INCLUDE} )
+# Find OpenCV  
+find_package(OpenCV QUIET)  
+if(OpenCV_FOUND)  
+    include_directories(${OpenCV_INCLUDE_DIRS})  
+    add_definitions(-DUSE_OPENCV)  
+else()  
+    message(FATAL_ERROR "OpenCV not found. ${PROJECT_NAME} will not be able to display images.")  
+endif()  
 
-find_package(OpenCV QUIET)
-if( OpenCV_FOUND )
-    include_directories( ${OpenCV_INCLUDE_DIRS} )
-    add_definitions( -DUSE_OPENCV )
-    set(SRCS ${SRCS} raw2opencv.cpp )
-    link_directories( ${OpenCV_LIB_PATH} )
-else()
-    message("OpenCV not found, ${PROJECT_NAME} will not be able to display images")
-endif()
+# Find xvsdk  
+find_package(xvsdk REQUIRED)  
+include_directories(${xvsdk_INCLUDE_DIRS})  
 
-ADD_EXECUTABLE( ${PROJECT_NAME} ${SRCS} )
-TARGET_LINK_LIBRARIES( ${PROJECT_NAME} ${xvsdk_LIBRARIES} ${OpenCV_LIBS} -pthread )
+# Define source files for both executables  
+set(ex1  
+    ex1.cpp  
+    raw2opencv.cpp  # Other files required for this executable  
+)
+set(ex2
+    ex2.cpp  
+    raw2opencv.cpp  # Other files required for this executable  
+)
+set(ex3
+    ex3.cpp  
+    raw2opencv.cpp  # Other files required for this executable  
+)  
 
+# Create two executables  
+add_executable(ex1 ${ex1})  
+add_executable(ex2 ${ex2})  
+add_executable(ex3 ${ex3})  
+
+# Link libraries with both applications  
+target_link_libraries(ex1 ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
+target_link_libraries(ex2 ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
+target_link_libraries(ex3 ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)  

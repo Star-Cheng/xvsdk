@@ -86,9 +86,6 @@ int main(int /*argc*/, char * /*argv*/[])
         return EXIT_FAILURE;
     }
 
-    // 注册方向（3dof）跟踪
-    // device->orientationStream()->registerCallback(on3dof);
-
     // 启动3dof跟踪
     device->orientationStream()->start();
 
@@ -121,7 +118,7 @@ int main(int /*argc*/, char * /*argv*/[])
                               << " roll="  << pitchYawRoll[2]*180./M_PI << "°" << std::endl;
                 }
             }
-            std::this_thread::sleep_until(now + std::chrono::microseconds(long(1. / 60. * 1e6)));
+            std::this_thread::sleep_until(now + std::chrono::microseconds(long(1. / 600. * 1e6)));
         } });
 
     std::cout << "Press enter to start SLAM ..." << std::endl;
