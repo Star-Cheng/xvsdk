@@ -22,12 +22,17 @@ set(SRCS_SLAM_6_DOF
 
 set(SRCS_SLAM_INFO  
     slam_info.cpp  
+)
+set(save_6_dof  
+    save_6_dof.cpp  
 )  
 
 # Create two executables  
 add_executable(slam_6_dof ${SRCS_SLAM_6_DOF})  
 add_executable(slam_info ${SRCS_SLAM_INFO})  
+add_executable(save_6_dof ${save_6_dof})  
 
 # Link libraries with both applications  
 target_link_libraries(slam_6_dof ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)  
 target_link_libraries(slam_info ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
+target_link_libraries(save_6_dof ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)

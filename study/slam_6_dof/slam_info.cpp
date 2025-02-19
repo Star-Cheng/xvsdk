@@ -32,7 +32,7 @@ void slamCallback(const xv::Pose& pose) {
     cv::putText(img, "FPS: " + std::to_string(std::round(fc.fps())), cv::Point(10, 150), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
 
     cv::imshow("SLAM Visualization", img);
-    cv::waitKey(1);
+    cv::waitKey(10);
 }
 
 int main(int argc, char* argv[]) {

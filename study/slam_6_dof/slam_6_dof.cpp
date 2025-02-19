@@ -68,7 +68,7 @@ int main( int /*argc*/, char* /*argv*/[] )
     device->orientationStream()->registerCallback(on3dof);
 
     // start the 3dof tracking
-    // device->orientationStream()->start();
+    device->orientationStream()->start();
     device->slam()->registerCallback(onPose);
     auto display = device->display();
 

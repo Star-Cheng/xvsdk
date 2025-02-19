@@ -13,12 +13,10 @@ void rgbCallback(const xv::ColorImage &rgb)
     std::cout << "RGB Frame: " << rgb.width << "x" << rgb.height << " @ " << std::round(fc.fps()) << "fps" << std::endl;
 
     // 将 RGB 图像数据转换为 OpenCV 的 Mat 格式
-    cv::Mat image(rgb.height, rgb.width, CV_8UC3, const_cast<uint8_t *>(rgb.data.get()));
+    cv::Mat image(rgb.height, rgb.width, CV_8UC1, const_cast<uint8_t *>(rgb.data.get()));
     cv::imshow("RGB Camera", image);
-
-    cv::waitKey(3); // 等待 1ms，用于刷新图像显示
+    cv::waitKey(1); // 等待 1ms，用于刷新图像显示
 }
-
 int main(int argc, char *argv[])
 {
     try
@@ -44,11 +42,12 @@ int main(int argc, char *argv[])
             return EXIT_FAILURE;
         }
 
-        // 设置 RGB 相机的分辨率（可选）
-        device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1920x1080);
-
         // 注册 RGB 图像回调函数
         device->colorCamera()->registerCallback(rgbCallback);
+
+        // 设置 RGB 相机的分辨率（可选）
+        // device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1920x1080);
+        device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1280x720);
 
         // 启动 RGB 相机
         device->colorCamera()->start();
@@ -56,8 +55,9 @@ int main(int argc, char *argv[])
         std::cout << "RGB camera started. Press 'q' to quit." << std::endl;
 
         // 创建窗口并指定位置
-        cv::namedWindow("RGB Camera", cv::WINDOW_NORMAL);
-        cv::moveWindow("RGB Camera", 100, 100);
+        // cv::namedWindow("RGB Camera", cv::WINDOW_NORMAL);
+        cv::namedWindow("RGB Camera");
+        cv::moveWindow("RGB Camera", 20, 462);
 
         // 主循环，等待用户退出
         while (true)
