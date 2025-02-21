@@ -13,7 +13,7 @@ void rgbCallback(const xv::ColorImage& rgb) {
     std::cout << "RGB Frame: " << rgb.width << "x" << rgb.height << " @ " << std::round(fc.fps()) << "fps" << std::endl;
 
     // 将 RGB 图像数据转换为 OpenCV 的 Mat 格式
-    cv::Mat rgbImage(rgb.height, rgb.width, CV_8UC3, const_cast<uint8_t*>(rgb.data.get()));
+    cv::Mat rgbImage(rgb.height, rgb.width, CV_8UC1, const_cast<uint8_t*>(rgb.data.get()));
     cv::imshow("RGB Camera", rgbImage);
 
     cv::waitKey(1); // 等待 1ms，用于刷新图像显示
@@ -69,13 +69,13 @@ int main(int argc, char* argv[]) {
         }
 
         // 设置 RGB 相机的分辨率（可选）
-        device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1920x1080);
+        device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1280x720);
 
         // 设置 TOF 相机的工作模式
         device->tofCamera()->setLibWorkMode(xv::TofCamera::SonyTofLibMode::LABELIZE_DF);
 
         // 注册 RGB 图像回调函数
-        // device->colorCamera()->registerCallback(rgbCallback);
+        device->colorCamera()->registerCallback(rgbCallback);
 
         // 注册 TOF 深度图像回调函数
         device->tofCamera()->registerCallback(tofCallback);
@@ -89,11 +89,11 @@ int main(int argc, char* argv[]) {
         std::cout << "RGB and TOF cameras started. Press 'q' to quit." << std::endl;
 
         // 创建窗口并指定位置
-        cv::namedWindow("RGB Camera", cv::WINDOW_NORMAL);
+        cv::namedWindow("RGB Camera");
         cv::moveWindow("RGB Camera", 100, 100);
 
-        cv::namedWindow("TOF Depth Camera", cv::WINDOW_NORMAL);
-        cv::moveWindow("TOF Depth Camera", 800, 100);
+        cv::namedWindow("TOF Depth Camera");
+        cv::moveWindow("TOF Depth Camera", 100, 100);
 
         // 主循环，等待用户退出
         while (true) {
