@@ -19,6 +19,40 @@
 #include <corecrt_math_defines.h>
 #endif
 
+std::shared_ptr<xv::Device> device = nullptr;
+
+xv::XV_IRIS_DATA irisData;
+
+static struct xv::sgbm_config global_config = {
+    1 ,//enable_dewarp
+    1.0, //dewarp_zoom_factor
+    0, //enable_disparity
+    1, //enable_depth
+    0, //enable_point_cloud
+    0.08, //baseline
+    96, //fov
+    255, //disparity_confidence_threshold
+    {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0}, //homography
+    1, //enable_gamma
+    2.2, //gamma_value
+    0, //enable_gaussian
+    0, //mode
+    8000, //max_distance
+    100, //min_distance
+};
+
+
+void enrollCallback(const xv::XV_IRIS_DATA &enrollData)
+{
+    printf("enter into enroll callback\n");
+    irisData = enrollData;
+}
+
+void irisCallback(const xv::XV_IRIS_DATA &irisData)
+{
+    printf("enter into iris callback\n");
+}
+
 int requestCmdAllPlatform(const char* tip_info, int size)
 {
 #ifdef _WIN32
@@ -35,18 +69,23 @@ std::string map_filename = "map.bin";
 std::string map_shared_filename = "map_shared.bin";
 std::atomic_int localized_on_reference_percent(0);
 std::filebuf mapStream;
+bool enable_output_log = true;
+int slamStartMode = 0;
+
 void imuCallback(std::shared_ptr<const xv::Imu> imu)
 {
     static FpsCount fc;
     fc.tic();
     static int k = 0;
     if (k++ % 100 == 0) {
-        std::cout << "imu" << "@" << std::round(fc.fps()) << "fps"
-            << " Time=(" << imu->edgeTimestampUs << " " << imu->hostTimestamp << "),"
-            << " Gyro=(" << imu->gyro[0] << " " << imu->gyro[1] << " " << imu->gyro[2] << "),"
-            << " Accel=(" << imu->accel[0] << " " << imu->accel[1] << " " << imu->accel[2] << "),"
-            << " Temperature=" << imu->temperature
-            << std::endl;
+        if(enable_output_log){
+            std::cout << "imu" << "@" << std::round(fc.fps()) << "fps"
+                      << " Time=(" << imu->edgeTimestampUs << " " << imu->hostTimestamp << "),"
+                      << " Gyro=(" << imu->gyro[0] << " " << imu->gyro[1] << " " << imu->gyro[2] << "),"
+                      << " Accel=(" << imu->accel[0] << " " << imu->accel[1] << " " << imu->accel[2] << "),"
+                      << " Temperature=" << imu->temperature
+                      << std::endl;
+        }
     }
 }
 //add event and cnn code
@@ -93,8 +132,10 @@ void eventCallback(xv::Event const& event)
     default:
         break;
     }
-    std::cout << "****Event@" << "edgeTimestampUs:" << event.edgeTimestampUs
-        << ";  Type:" << strType << ";  State:" << strEvent << std::endl;
+    if(enable_output_log){
+        std::cout << "****Event@" << "edgeTimestampUs:" << event.edgeTimestampUs
+                  << ";  Type:" << strType << ";  State:" << strEvent << std::endl;
+    }
 }
 
 //add CNN callback
@@ -105,7 +146,9 @@ void cnnCallback(std::vector<xv::Object> objs)
         for (int i = 0; i < objs.size(); i++)
         {
             xv::Object obj = objs.at(i);
-            std::cout << obj.width << "x" << obj.height << " # " << obj.type << " # confidence:" << obj.confidence << "; " << std::endl;
+            if(enable_output_log){
+                std::cout << obj.width << "x" << obj.height << " # " << obj.type << " # confidence:" << obj.confidence << "; " << std::endl;
+            }
         }
     }
 }
@@ -115,7 +158,9 @@ void  fisheyeLCallback(xv::FisheyeImages const& fisheye) {
     fc.tic();
     static int k = 0;
     if (k++ % 50 == 0 && fisheye.images.size() >= 1) {
-        std::cout << fisheye.images.at(0).width << "x" << fisheye.images.at(0).height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        if(enable_output_log){
+            std::cout << fisheye.images.at(0).width << "x" << fisheye.images.at(0).height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        }
     }
 }
 
@@ -124,7 +169,9 @@ void  fisheyeRCallback(xv::FisheyeImages const& fisheye) {
     fc.tic();
     static int k = 0;
     if (k++ % 50 == 0 && fisheye.images.size() >= 2) {
-        std::cout << "Right image" << fisheye.images.at(1).width << "x" << fisheye.images.at(1).height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        if(enable_output_log){
+            std::cout << "Right image" << fisheye.images.at(1).width << "x" << fisheye.images.at(1).height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        }
     }
 }
 
@@ -135,9 +182,11 @@ void orientationCallback(xv::Orientation const& o)
     static int k = 0;
     if (k++ % 100 == 0) {
         auto& q = o.quaternion();
-        std::cout << "orientation" << "@" << std::round(fc.fps()) << "fps"
-            << " 3dof=(" << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "),"
-            << std::endl;
+        if(enable_output_log){
+            std::cout << "orientation" << "@" << std::round(fc.fps()) << "fps"
+                      << " 3dof=(" << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "),"
+                      << std::endl;
+        }
     }
 }
 
@@ -147,19 +196,23 @@ void GestureCallbackEX(xv::GestureData const& gesture)
     {
         if (gesture.index[i] != -1)
         {
-            std::cout << "gesture host timestamp = " << gesture.hostTimestamp << std::endl;
-            std::cout << "gesture edge timestamp = " << gesture.edgeTimestampUs << std::endl;
-            std::cout << "gesture index = " << gesture.index[i] << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture host timestamp = " << gesture.hostTimestamp << std::endl;
+                std::cout << "gesture edge timestamp = " << gesture.edgeTimestampUs << std::endl;
+                std::cout << "gesture index = " << gesture.index[i] << std::endl;
+            }
         }
     }
 }
 
 void GesturePosCallbackEX(std::shared_ptr<const std::vector<xv::Pose>> poses)
 {
-    std::cout << "keypoints 21Dof is : " << std::endl;
-    for (auto pose : *poses.get())
-    {
-        std::cout << "x = " << pose.x() << " " << "y = " << pose.y() << " " << "z = " << pose.z() << std::endl;
+    if(enable_output_log){
+        std::cout << "keypoints 21Dof is : " << std::endl;
+        for (auto pose : *poses.get())
+        {
+            std::cout << "x = " << pose.x() << " " << "y = " << pose.y() << " " << "z = " << pose.z() << std::endl;
+        }
     }
 }
 
@@ -169,8 +222,10 @@ void eyetrackingCallback(xv::EyetrackingImage const& o)
     fc.tic();
     static int k = 0;
     if (k++ % 30 == 0) {
-        std::cout << "[eyetracking]" << o.images[0].width << "x" << o.images[0].height << "@" << std::round(fc.fps()) << "fps"
-            << std::endl;
+        if(enable_output_log){
+            std::cout << "[eyetracking]" << o.images[0].width << "x" << o.images[0].height << "@" << std::round(fc.fps()) << "fps"
+                      << std::endl;
+        }
     }
 }
 
@@ -180,7 +235,9 @@ void stereoCallback(std::shared_ptr<const xv::FisheyeImages> stereo)
     fc.tic();
     static int k = 0;
     if (k++ % 50 == 0) {
-        std::cout << stereo->images[0].width << "x" << stereo->images[0].height + stereo->images[1].height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        if(enable_output_log){
+            std::cout << stereo->images[0].width << "x" << stereo->images[0].height + stereo->images[1].height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        }
     }
 }
 
@@ -191,11 +248,13 @@ void poseCallback(xv::Pose const& pose) {
     if (k++ % 100 == 0) {
         auto t = pose.translation();
         auto r = xv::rotationToPitchYawRoll(pose.rotation());
-        std::cout << "slam-callback-pose" << "@" << std::round(fc.fps()) << "fps"
-            << " p=(" << t[0] << " " << t[1] << " " << t[2]
-            << " ), r=(" << r[0] << " " << r[1] << " " << r[2] << " )"
-            << ", Confidence= " << pose.confidence()
-            << std::endl;
+        if(enable_output_log){
+            std::cout << "slam-callback-pose" << "@" << std::round(fc.fps()) << "fps"
+                      << " p=(" << t[0] << " " << t[1] << " " << t[2]
+                      << " ), r=(" << r[0] << " " << r[1] << " " << r[2] << " )"
+                      << ", Confidence= " << pose.confidence()
+                      << std::endl;
+        }
     }
 }
 
@@ -227,30 +286,34 @@ void startGetPose(std::shared_ptr<xv::Slam> slam)
             bool ok = slam->getPose(pose, prediction);
 
             if (ok) {
-                ++nb_ok;
+                nb_ok++;
                 static int k = 0;
                 if (k++ % 100 == 0) {
                     auto t = pose.translation();
                     auto r = xv::rotationToPitchYawRoll(pose.rotation());
-
-                    //std::cout << "slam-get-pose [" << p->x << "," << p->y << "," << p->z << "]" << std::endl;
-                    std::cout << std::setprecision(5) << "slam-get-pose"
-                        << " p=(" << t[0] << " " << t[1] << " " << t[2]
-                        << " ), r=(" << r[0] << " " << r[1] << " " << r[2] << " )"
-                        << ", Confidence= " << pose.confidence()
-                        << std::endl;
+                    if(enable_output_log){
+                        //std::cout << "slam-get-pose [" << p->x << "," << p->y << "," << p->z << "]" << std::endl;
+                        std::cout << std::setprecision(5) << "slam-get-pose"
+                                  << " p=(" << pose.x() << "," << pose.y() << "," << pose.z() << "," << r[0]*180/M_PI << "," << r[1]*180/M_PI << "," << r[2]*180/M_PI << " )"
+                                  << ", Confidence= " << pose.confidence()
+                                  << std::endl;
+                    }
                 }
             }
             n++;
         }
-        std::cout << "Nb get pose ok: " << 100.0 * double(nb_ok) / n << "% (" << nb_ok << "/" << n << ")" << std::endl;
+        if(enable_output_log){
+            std::cout << "Nb get pose ok: " << 100.0 * double(nb_ok) / n << "% (" << nb_ok << "/" << n << ")" << std::endl;
+        }
         });
 
 }
 
 void startGetPoseAt(std::shared_ptr<xv::Slam> slam)
 {
-    std::cout << "Wait 5s ...\n";
+    if(enable_output_log){
+        std::cout << "Wait 5s ...\n";
+    }
     std::this_thread::sleep_for(std::chrono::seconds(5));
     stop = false;
     tpos = std::thread ([slam]{
@@ -265,7 +328,9 @@ void startGetPoseAt(std::shared_ptr<xv::Slam> slam)
                 static int k = 0;
                 if (k++ % 100 == 0) {
                     auto pitchYawRoll = xv::rotationToPitchYawRoll(poseAt.rotation());
-                    std::cout << "slam-poseAt" << " (" << poseAt.x() << "," << poseAt.y() << "," << poseAt.z() << "," << pitchYawRoll[0] * 180 / M_PI << "," << pitchYawRoll[1] * 180 / M_PI << "," << pitchYawRoll[2] * 180 / M_PI << ")" << std::endl;
+                    if(enable_output_log){
+                        std::cout << "slam-poseAt" << " (" << poseAt.x() << "," << poseAt.y() << "," << poseAt.z() << "," << pitchYawRoll[0] * 180 / M_PI << "," << pitchYawRoll[1] * 180 / M_PI << "," << pitchYawRoll[2] * 180 / M_PI << ")" << std::endl;
+                    }
                 }
             }
 
@@ -291,9 +356,11 @@ void Start3DofGet(std::shared_ptr<xv::OrientationStream> orientation)
                 static int k = 0;
                 if (k++ % 100 == 0) {
                     auto& q = orientation30ms.quaternion();
-                    std::cout << "orientation30ms"
-                        << " 3dof=(" << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "),"
-                        << std::endl;
+                    if(enable_output_log){
+                        std::cout << "orientation30ms"
+                                  << " 3dof=(" << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "),"
+                                  << std::endl;
+                    }
                 }
             }
             // to simulate the 60Hz loop
@@ -320,15 +387,20 @@ void Start3DofGetAt(std::shared_ptr<xv::OrientationStream> orientation)
         while(!stop)
         {
             auto now = std::chrono::steady_clock::now();
-            t = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() * 1e-6;
+            if(slamStartMode == 0)
+                t = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() * 1e-6;
+            else
+                t = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
             t += 0.0123;
             if (orientation->getAt(orientationAt, t)) {
                 static int k = 0;
                 if (k++ % 100 == 0) {
                     auto& q = orientationAt.quaternion();
-                    std::cout << "orientationAt"
-                        << " 3dof=(" << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "),"
-                        << std::endl;
+                    if(enable_output_log){
+                        std::cout << "orientationAt"
+                                  << " 3dof=(" << q[0] << " " << q[1] << " " << q[2] << " " << q[3] << "),"
+                                  << std::endl;
+                    }
                 }
             }
             // to simulate the 60Hz loop
@@ -349,19 +421,23 @@ void Stop3DofGetAt()
 
 void cslamSavedCallback(int status_of_saved_map, int map_quality)
 {
-    std::cout << " Save map (quality is " << map_quality << "/100) and switch to CSlam:";
-    switch (status_of_saved_map)
-    {
-    case  2: std::cout << " Map well saved. " << std::endl; break;
-    case -1: std::cout << " Map cannot be saved, an error occured when trying to save it." << std::endl; break;
-    default: std::cout << " Unrecognized status of saved map " << std::endl; break;
+    if(enable_output_log){
+        std::cout << " Save map (quality is " << map_quality << "/100) and switch to CSlam:";
+        switch (status_of_saved_map)
+        {
+        case  2: std::cout << " Map well saved. " << std::endl; break;
+        case -1: std::cout << " Map cannot be saved, an error occured when trying to save it." << std::endl; break;
+        default: std::cout << " Unrecognized status of saved map " << std::endl; break;
+        }
     }
     mapStream.close();
 }
 
 void cslamSwitchedCallback(int map_quality)
 {
-    std::cout << " map (quality is " << map_quality << "/100) and switch to CSlam:";
+    if(enable_output_log){
+        std::cout << " map (quality is " << map_quality << "/100) and switch to CSlam:";
+    }
     mapStream.close();
 }
 
@@ -374,9 +450,23 @@ void rgbCallback(xv::ColorImage const& rgb) {
     fc.tic();
     static int k = 0;
     if (k++ % 10 == 0) {
-        std::cout << rgb.width << "x" << rgb.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        if(enable_output_log){
+            std::cout << "rgb: " << rgb.width << "x" << rgb.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        }
     }
 }
+
+void rgb2Callback(xv::ColorImage const& rgb) {
+    static FpsCount fc;
+    fc.tic();
+    static int k = 0;
+    if (k++ % 10 == 0) {
+        if(enable_output_log){
+            std::cout << "rgb2: " << rgb.width << "x" << rgb.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+        }
+    }
+}
+
 
 void planeCallback(std::shared_ptr<const std::vector<xv::Plane>> planes)
 {
@@ -385,10 +475,12 @@ void planeCallback(std::shared_ptr<const std::vector<xv::Plane>> planes)
         for (auto const& plane : *planes.get()) {
             static int k;
             if (k++ % 20 == 0) {
-                std::cout << "got plane, id: " << plane.id << ", [" << plane.normal[0] << "," << plane.normal[1] << "," << plane.normal[2] << "]" << std::endl;
-                for (auto const& x : plane.points)
-                    std::cout << "(" << x[0] << "," << x[1] << " " << x[2] << ")";
-                std::cout << std::endl;
+                if(enable_output_log){
+                    std::cout << "got plane, id: " << plane.id << ", [" << plane.normal[0] << "," << plane.normal[1] << "," << plane.normal[2] << "]" << std::endl;
+                    for (auto const& x : plane.points)
+                        std::cout << "(" << x[0] << "," << x[1] << " " << x[2] << ")";
+                    std::cout << std::endl;
+                }
             }
         }
     }
@@ -400,11 +492,13 @@ void gestureCallback(xv::GestureData const& gesture)
     {
         if (gesture.index[i] != -1)
         {
-            std::cout << "gesture host timestamp = " << gesture.hostTimestamp << std::endl;
-            std::cout << "gesture edge timestamp = " << gesture.edgeTimestampUs << std::endl;
-            std::cout << "gesture pos x = " << gesture.position[i].x << std::endl;
-            std::cout << "gesture pos y = " << gesture.position[i].y << std::endl;
-            std::cout << "gesture index = " << gesture.index[i] << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture host timestamp = " << gesture.hostTimestamp << std::endl;
+                std::cout << "gesture edge timestamp = " << gesture.edgeTimestampUs << std::endl;
+                std::cout << "gesture pos x = " << gesture.position[i].x << std::endl;
+                std::cout << "gesture pos y = " << gesture.position[i].y << std::endl;
+                std::cout << "gesture index = " << gesture.index[i] << std::endl;
+            }
         }
     }
 }
@@ -415,9 +509,11 @@ void dynamicgestureCallback(xv::GestureData const& gesture)
     {
         if (gesture.index[i] != -1)
         {
-            std::cout << "dynamic gesture host timestamp = " << gesture.hostTimestamp << std::endl;
-            std::cout << "dynamic gesture edge timestamp = " << gesture.edgeTimestampUs << std::endl;
-            std::cout << "dynamic gesture index = " << gesture.index[i] << std::endl;
+            if(enable_output_log){
+                std::cout << "dynamic gesture host timestamp = " << gesture.hostTimestamp << std::endl;
+                std::cout << "dynamic gesture edge timestamp = " << gesture.edgeTimestampUs << std::endl;
+                std::cout << "dynamic gesture index = " << gesture.index[i] << std::endl;
+            }
         }
     }
 }
@@ -426,37 +522,69 @@ void keypointsCallback(std::shared_ptr<const std::vector<xv::keypoint>> keypoint
 {
     if (keypoints->size() == 21 || keypoints->size() == 42)
     {
-        std::cout << "keypoints 21Dof is : " << std::endl;
-        for (auto keypoint : *keypoints.get())
-        {
-            std::cout << "x = " << keypoint.x << " " << "y = " << keypoint.y << " " << "z = " << keypoint.z << std::endl;
+        if(enable_output_log){
+            std::cout << "keypoints 21Dof is : " << std::endl;
+            for (auto keypoint : *keypoints.get())
+            {
+                std::cout << "x = " << keypoint.x << " " << "y = " << keypoint.y << " " << "z = " << keypoint.z << std::endl;
+            }
         }
     }
 }
 
-void slamkeypointsCallback(std::shared_ptr<const std::vector<xv::keypoint>> keypoints)
+void slamkeypointsCallback(std::shared_ptr<const xv::HandPose> keypoints)
 {
-    if (keypoints->size() == 21 || keypoints->size() == 42)
-    {
-        std::cout << "keypoints 21Dof base on slam is : " << std::endl;
-        for (auto keypoint : *keypoints.get())
+    if(enable_output_log){
+        int count = 0;
+        auto results = *keypoints;
+        std::cout << "scale: " << results.scale[0] << " " << results.scale[1] << std::endl;
+        for (auto keypoint : results.pose)
         {
-            std::cout << "x = " << keypoint.x << " " << "y = " << keypoint.y << " " << "z = " << keypoint.z << std::endl;
+            if((keypoint.x() + keypoint.y() + keypoint.z()) > 1e-3)
+            {
+                std::cout << "x = " << keypoint.x() << " " << "y = " << keypoint.y() << " " << "z = " << keypoint.z() << std::endl;
+                count++;
+            }
+        }
+        double left_timestamp = results.timestamp[0];
+        double right_timestamp = results.timestamp[1];
+        double fisheye_timestamp = results.fisheye_timestamp;
+        std::cout << "left_result interval: " << fisheye_timestamp-left_timestamp << std::endl;
+        std::cout << "right_result interval: " << fisheye_timestamp-right_timestamp << std::endl;
+        // std::cout << "keypoints 26Dof base on slam is : " << count << std::endl;
+    }
+}
+
+void objDetRKNN3588Callback(const std::vector<xv::Det2dObject>& res)
+{
+    if(enable_output_log){
+        std::cout << "******************" << std::endl;
+        for (int i=0; i<res.size(); ++i){
+            printf("obj: %d id: %i name: %s score: %f box: [%f, %f, %f, %f], keypoints_size: %li \n", 
+                    i, res[i].idx, res[i].name.c_str(), res[i].score, res[i].top, res[i].left, res[i].width, res[i].height, res[i].keypoints.size());
+            for (int j=0; j<res[i].keypoints.size(); ++j){
+                printf("x:%f y:%f z:%f \n", res[i].keypoints[j].x, res[i].keypoints[j].y, res[i].keypoints[j].z);
+            }
         }
     }
 }
 
 void gazeCallback(xv::XV_ET_EYE_DATA_EX const& gazeData)
 {
-    std::cout << "enter gazeCallback" << std::endl;
-    printf("xvsdk_gaze timestamp = %lld\n", gazeData.timestamp);
-    printf("xvsdk_gaze recommend = %d\n", gazeData.recommend);
-    printf("xvsdk_gaze leftGaze gazePoint x = %f, y = %f, z = %f\n", gazeData.leftGaze.gazePoint.x, gazeData.leftGaze.gazePoint.y, gazeData.leftGaze.gazePoint.z);
-    printf("xvsdk_gaze leftGaze rawPoint x = %f, y = %f, z = %f\n", gazeData.leftGaze.rawPoint.x, gazeData.leftGaze.rawPoint.y, gazeData.leftGaze.rawPoint.z);
-    printf("xvsdk_gaze leftGaze smoothPoint x = %f, y = %f, z = %f\n", gazeData.leftGaze.smoothPoint.x, gazeData.leftGaze.smoothPoint.y, gazeData.leftGaze.smoothPoint.z);
-    printf("xvsdk_gaze rightGaze gazePoint x = %f, y = %f, z = %f\n", gazeData.rightGaze.gazePoint.x, gazeData.rightGaze.gazePoint.y, gazeData.rightGaze.gazePoint.z);
-    printf("xvsdk_gaze rightGaze rawPoint x = %f, y = %f, z = %f\n", gazeData.rightGaze.rawPoint.x, gazeData.rightGaze.rawPoint.y, gazeData.rightGaze.rawPoint.z);
-    printf("xvsdk_gaze rightGaze smoothPoint x = %f, y = %f, z = %f\n", gazeData.rightGaze.smoothPoint.x, gazeData.rightGaze.smoothPoint.y, gazeData.rightGaze.smoothPoint.z);
+    if(enable_output_log){
+        std::cout << "enter gazeCallback" << std::endl;
+        printf("xvsdk_gaze timestamp = %lld\n", gazeData.timestamp);
+        printf("xvsdk_gaze ipd = %f\n", gazeData.ipd);
+        // printf("xvsdk_gaze recommend = %d\n", gazeData.recommend);
+        printf("xvsdk_gaze leftGaze gazePoint x = %f, y = %f, z = %f\n", gazeData.leftGaze.gazePoint.x, gazeData.leftGaze.gazePoint.y, gazeData.leftGaze.gazePoint.z);
+        // printf("xvsdk_gaze leftGaze rawPoint x = %f, y = %f, z = %f\n", gazeData.leftGaze.rawPoint.x, gazeData.leftGaze.rawPoint.y, gazeData.leftGaze.rawPoint.z);
+        // printf("xvsdk_gaze leftGaze smoothPoint x = %f, y = %f, z = %f\n", gazeData.leftGaze.smoothPoint.x, gazeData.leftGaze.smoothPoint.y, gazeData.leftGaze.smoothPoint.z);
+        printf("xvsdk_gaze rightGaze gazePoint x = %f, y = %f, z = %f\n", gazeData.rightGaze.gazePoint.x, gazeData.rightGaze.gazePoint.y, gazeData.rightGaze.gazePoint.z);
+        // printf("xvsdk_gaze rightGaze rawPoint x = %f, y = %f, z = %f\n", gazeData.rightGaze.rawPoint.x, gazeData.rightGaze.rawPoint.y, gazeData.rightGaze.rawPoint.z);
+        // printf("xvsdk_gaze rightGaze smoothPoint x = %f, y = %f, z = %f\n", gazeData.rightGaze.smoothPoint.x, gazeData.rightGaze.smoothPoint.y, gazeData.rightGaze.smoothPoint.z);
+        printf("xvsdk_gaze left pupil x = %f, y = %f\n", gazeData.leftPupil.pupilCenter.x, gazeData.leftPupil.pupilCenter.y);
+        printf("xvsdk_gaze right pupil x = %f, y = %f\n", gazeData.rightPupil.pupilCenter.x, gazeData.rightPupil.pupilCenter.y);
+    }
 }
 
 template<class F, std::size_t N>
@@ -500,6 +628,40 @@ std::ostream& operator<<(std::ostream& o, const xv::PolynomialDistortionCameraMo
     return o;
 }
 
+std::ostream& operator<<(std::ostream& o, const xv::SpecialUnifiedCameraModel &m)
+{
+    o << "{";
+    o << "w=" << m.w << ", ";
+    o << "h=" << m.h << ", ";
+    o << "fx=" << m.fx << ", ";
+    o << "fy=" << m.fy << ", ";
+    o << "u0=" << m.u0 << ", ";
+    o << "v0=" << m.v0 << ", ";
+    o << "eu=" << m.eu;
+    o << "ev=" << m.ev;
+    o << "alpha=" << m.alpha;
+    o << "beta=" << m.beta;
+    o << "}";
+    return o;
+}
+
+std::ostream& operator<<(std::ostream& o, xv::CalibrationEx const& c)
+{
+    o << "Calibration:" << std::endl;
+    o << " R:" << c.pose.rotation() << std::endl;
+    o << " T: " << c.pose.translation() << std::endl;
+    for(int i=0;i<c.ucm.size();i++){
+        o << "UCM" << i << ": " << c.ucm.at(i) << std::endl;
+    }
+    for(int i=0;i<c.pdcm.size();i++){
+        o << "PDCM" << i << ": " << c.pdcm.at(i) << std::endl;
+    }
+    for(int i=0;i<c.seucm.size();i++){
+        o << "SEUCM" << i << ": " << c.seucm.at(i) << std::endl;
+    }
+    return o;
+}
+
 std::ostream& operator<<(std::ostream& o, xv::Calibration const& c)
 {
     o << "Calibration:" << std::endl;
@@ -517,7 +679,19 @@ std::ostream& operator<<(std::ostream& o, xv::Calibration const& c)
 std::ostream& operator<<(std::ostream& o, const std::vector<xv::Calibration>& calibs)
 {
     for (auto c : calibs) {
-        std::cout << c << std::endl;
+        if(enable_output_log){
+            std::cout << c << std::endl;
+        }
+    }
+    return o;
+}
+
+std::ostream& operator<<(std::ostream& o, const std::vector<xv::CalibrationEx> &calibs)
+{
+    for (auto c : calibs) {
+        if(enable_output_log){
+            std::cout << c << std::endl;
+        }
     }
     return o;
 }
@@ -545,11 +719,15 @@ void SetRgbResolution(int cmd, std::shared_ptr<xv::ColorCamera> camera)
         camera->setResolution(xv::ColorCamera::Resolution::RGB_3840x2160);
         break;
     default:
-        std::cout << "set rgb resolution format wrong" << std::endl;
+        if(enable_output_log){
+            std::cout << "set rgb resolution format wrong" << std::endl;
+        }
         return;
         break;
     }
-    std::cout << "set rgb resolution successfully" << std::endl;
+    if(enable_output_log){
+        std::cout << "set rgb resolution successfully" << std::endl;
+    }
 }
 
 bool SetTofDistanceMode(int cmd, std::shared_ptr<xv::TofCamera> camera)
@@ -603,7 +781,9 @@ void cslamLocalizedCallback(float percent)
     static int k = 0;
     if (k++ % 100 == 0) {
         localized_on_reference_percent = static_cast<int>(percent * 100);
-        std::cout << "localized: " << localized_on_reference_percent << "%" << std::endl;
+        if(enable_output_log){
+            std::cout << "localized: " << localized_on_reference_percent << "%" << std::endl;
+        }
     }
 }
 
@@ -616,42 +796,54 @@ void cameraOnOffSwitch(int switchMode, std::shared_ptr<xv::Device> device)
         bOk = device->fisheyeCameras()->start();
         if (bOk)
         {
-            std::cout << "fisheye camera start successfully" << std::endl;
+            if(enable_output_log){
+                std::cout << "fisheye camera start successfully" << std::endl;
+            }
         }
         break;
     case 2:
         bOk = device->fisheyeCameras()->stop();
         if (bOk)
         {
-            std::cout << "fisheye camera stop successfully" << std::endl;
+            if(enable_output_log){
+                std::cout << "fisheye camera stop successfully" << std::endl;
+            }
         }
         break;
     case 3:
         bOk = device->colorCamera()->start();
         if (bOk)
         {
-            std::cout << "rgb camera start successfully" << std::endl;
+            if(enable_output_log){
+                std::cout << "rgb camera start successfully" << std::endl;
+            }
         }
         break;
     case 4:
         bOk = device->colorCamera()->start();
         if (bOk)
         {
-            std::cout << "rgb camera stop successfully" << std::endl;
+            if(enable_output_log){
+                std::cout << "rgb camera stop successfully" << std::endl;
+            }
         }
         break;
     case 5:
         bOk = device->tofCamera()->start();
         if (bOk)
         {
-            std::cout << "tof camera start successfully" << std::endl;
+            if(enable_output_log){
+                std::cout << "tof camera start successfully" << std::endl;
+            }
         }
         break;
     case 6:
         bOk = device->tofCamera()->stop();
         if (bOk)
         {
-            std::cout << "tof camera stop successfully" << std::endl;
+            if(enable_output_log){
+                std::cout << "tof camera stop successfully" << std::endl;
+            }
         }
         break;
     default:
@@ -669,17 +861,53 @@ void GetTagDetection(std::shared_ptr<xv::FisheyeCameras> fisheye, std::string ta
             auto detections = std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(fisheye)->getTagDetections(tagDetectorId);
             if (!detections.empty())
             {
-                std::cout << "Tag detections: ";
-                for (auto const& d : detections) {
-                    auto const& pose = d.second;
-                    auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
-                    std::cout << "id=" << d.first
-                        << " (" << pose.x() << "," << pose.y() << "," << pose.z() << ","
-                        << pitchYawRoll[0] * 180 / M_PI << "," << pitchYawRoll[1] * 180 / M_PI << "," << pitchYawRoll[2] * 180 / M_PI << ") " << pose.confidence() << std::endl;
+                if(enable_output_log){
+                    std::cout << "Tag detections: ";
+                    for (auto const& d : detections) {
+                        auto const& pose = d.second;
+                        auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
+                        std::cout << "id=" << d.first
+                                  << " (" << pose.x() << "," << pose.y() << "," << pose.z() << ","
+                                  << pitchYawRoll[0] * 180 / M_PI << "," << pitchYawRoll[1] * 180 / M_PI << "," << pitchYawRoll[2] * 180 / M_PI << ") " << pose.confidence() << std::endl;
+                    }
                 }
             }
             else {
-                std::cout << "Tag empty " << std::endl;;
+                if(enable_output_log){
+                    std::cout << "Tag empty " << std::endl;;
+                }
+            }
+        }
+        });
+}
+
+void GetTagDetectionrgb(std::shared_ptr<xv::ColorCamera> fisheye, std::string tagDetectorId)
+{
+    stop = false;
+    tpos = std::thread ([fisheye, tagDetectorId]{
+        while (!stop) {
+            auto t0 = std::chrono::steady_clock::now();
+            std::this_thread::sleep_until(t0 + std::chrono::milliseconds(25));
+            auto detections = std::dynamic_pointer_cast<xv::ColorCameraEx>(fisheye)->getTagDetections(tagDetectorId);
+            if (!detections.empty())
+            {
+                if(enable_output_log){
+                    std::cout << "Tag detections: ";
+                    for (auto const& d : detections) {
+                        auto const& pose = d.second;
+                        auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
+                        std::string codeStr = std::dynamic_pointer_cast<xv::ColorCameraEx>(device->colorCamera())->getCode(tagDetectorId,0);
+                        printf("qr code: %s\n", codeStr.c_str());
+                        std::cout << "id=" << d.first
+                                  << " (" << pose.x() << "," << pose.y() << "," << pose.z() << ","
+                                  << pitchYawRoll[0] * 180 / M_PI << "," << pitchYawRoll[1] * 180 / M_PI << "," << pitchYawRoll[2] * 180 / M_PI << ") " << pose.confidence() << std::endl;
+                    }
+                }
+            }
+            else {
+                if(enable_output_log){
+                    std::cout << "Tag empty " << std::endl;;
+                }
             }
         }
         });
@@ -861,11 +1089,15 @@ public:
             {
                 auto points = m_tofCamera->depthImageToPointCloud(tof)->points;
                 auto firstPoint = points.begin();
-                std::cout << "type:sony tof cloud point@" << tof.width << "x" << tof.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                if(enable_output_log){
+                    std::cout << "type:sony tof cloud point@" << tof.width << "x" << tof.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                }
             }
             else if (m_tofCamera)
             {
-                std::cout << "type:" << types[type] << "@" << tof.width << "x" << tof.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                if(enable_output_log){
+                    std::cout << "type:" << types[type] << "@" << tof.width << "x" << tof.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                }
             }
             k = 1;
         }
@@ -878,9 +1110,11 @@ public:
         static int k = 0;
         if (k++ % 15 == 0)
         {
-            std::cout << "[ RGBD ]" << timeShowStr(depthColor.hostTimestamp)
-                << depthColor.width << "x" << depthColor.height << "@"
-                << std::round(fc.fps()) << "fps" << std::endl;
+            if(enable_output_log){
+                std::cout << "[ RGBD ]" << timeShowStr(depthColor.hostTimestamp)
+                          << depthColor.width << "x" << depthColor.height << "@"
+                          << std::round(fc.fps()) << "fps" << std::endl;
+            }
         }
     }
 
@@ -957,12 +1191,16 @@ public:
             xv::SgbmImage::Type streamMode = paras.getStreamMode();
             if (streamMode == xv::SgbmImage::Type::Depth)
             {
-                std::cout << "ImageType:Depth@" << "sgbm_image " << sgbm_image.width << "x" << sgbm_image.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                if(enable_output_log){
+                    std::cout << "ImageType:Depth@" << "sgbm_image " << sgbm_image.width << "x" << sgbm_image.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                }
             }
             else if (streamMode == xv::SgbmImage::Type::PointCloud)
             {
                 auto pointcloud = sgbmCamera->depthImageToPointCloud(sgbm_image);
-                std::cout << "ImageType:PointCloud@" << "sgbm_image " << sgbm_image.width << "x" << sgbm_image.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                if(enable_output_log){
+                    std::cout << "ImageType:PointCloud@" << "sgbm_image " << sgbm_image.width << "x" << sgbm_image.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                }
             }
         }
     }
@@ -1239,10 +1477,11 @@ public:
         {
             "1 : DepthOnly.       \n"
             "2 : CloudOnly.       \n"
+            "5 : CloudSlam.       \n"
             "enter select:"
         };
         int cmd_streamMode = requestCmdAllPlatform(menu_streamMode, sizeof(menu_streamMode));
-        if (cmd_streamMode < 1 || cmd_streamMode > 2)
+        if (cmd_streamMode < 1 || cmd_streamMode > 5)
         {
             cmd_streamMode = -1;
             errorMesgMenu();
@@ -1337,6 +1576,7 @@ void setTofParas(const std::shared_ptr<xv::Device> device)
         device->tofCamera()->setSonyTofSetting(tofCameraParas.getSonyTofLibMode(),
             tofCameraParas.getSonyResolution(),
             tofCameraParas.getSonyFramerate());
+        device->tofCamera()->setStreamMode(tofCameraParas.getStreamMode());
     }
     else if (tofManu == xv::TofCamera::Manufacturer::Pmd)
     {
@@ -1347,12 +1587,14 @@ void setTofParas(const std::shared_ptr<xv::Device> device)
     }
 
     TOFCallBackFun::m_tofCameraParas = tofCameraParas;
-    std::cout << "Tof fr:" << tofCameraParas.getNormalTofFramerate() << std::endl;
-    std::cout << "Distance mode:" << static_cast<int>(tofCameraParas.getDistanceMode()) << std::endl;
-    std::cout << "Sony Tof Lib Mode:" << static_cast<int>(tofCameraParas.getSonyTofLibMode()) << std::endl;
-    std::cout << "Sony Resolution:" << static_cast<int>(tofCameraParas.getSonyResolution()) << std::endl;
-    std::cout << "Sony Framerate:" << static_cast<int>(tofCameraParas.getSonyFramerate()) << std::endl;
-    std::cout << "Stream mode:" << static_cast<int>(tofCameraParas.getStreamMode()) << std::endl;
+    if(enable_output_log){
+        std::cout << "Tof fr:" << tofCameraParas.getNormalTofFramerate() << std::endl;
+        std::cout << "Distance mode:" << static_cast<int>(tofCameraParas.getDistanceMode()) << std::endl;
+        std::cout << "Sony Tof Lib Mode:" << static_cast<int>(tofCameraParas.getSonyTofLibMode()) << std::endl;
+        std::cout << "Sony Resolution:" << static_cast<int>(tofCameraParas.getSonyResolution()) << std::endl;
+        std::cout << "Sony Framerate:" << static_cast<int>(tofCameraParas.getSonyFramerate()) << std::endl;
+        std::cout << "Stream mode:" << static_cast<int>(tofCameraParas.getStreamMode()) << std::endl;
+    }
 }
 
 std::string timeShowStr(std::int64_t edgeTimestampUs, double hostTimestamp)
@@ -1378,9 +1620,11 @@ void colorCameraCallback(xv::ColorImage const& rgb)
     static int k = 0;
     if (k++ % 25 == 0)
     {
-        std::cout << "rgb@" << timeShowStr(rgb.edgeTimestampUs, rgb.hostTimestamp)
-            << rgb.width << "x" << rgb.height << "@"
-            << std::round(fc.fps()) << "fps" << std::endl;
+        if(enable_output_log){
+            std::cout << "rgb@" << timeShowStr(rgb.edgeTimestampUs, rgb.hostTimestamp)
+                      << rgb.width << "x" << rgb.height << "@"
+                      << std::round(fc.fps()) << "fps" << std::endl;
+        }
     }
 }
 
@@ -1475,7 +1719,9 @@ public:
                 break;
             }
         }
-        std::cout << "Color camera resolution:" << static_cast<int>(paras.getResolution()) << std::endl;
+        if(enable_output_log){
+            std::cout << "Color camera resolution:" << static_cast<int>(paras.getResolution()) << std::endl;
+        }
         bool result = device->colorCamera()->setResolution(paras.getResolution());
     }
 };
@@ -1528,23 +1774,128 @@ void startRGBDFunction(const std::shared_ptr<xv::Device> device, int& imuId, int
 
 void deviceStatusCallback(const std::vector<unsigned char>& deviceStatus)
 {
-    for (int i = 0; i < deviceStatus.size(); i++)
+    if(deviceStatus.size() < 42){
+        std::cout << "device status size error!" << std::endl;
+        return;
+    }
+
+    if(!enable_output_log) {
+        return;
+    }
+
+    std::cout << "temperature: ";
+    for(int i = 11; i < 17; i ++){
+        std::cout << (int)deviceStatus[i] << " ";
+    }
+
+    std::cout << " cpu_temp: " << (int)deviceStatus[17] << "  ";
+
+    std::cout << "fan: ";
+    for(int i = 18; i < 29; i ++){
+        std::cout << (int)deviceStatus[i] << " ";
+    }
+
+    std::cout << " soft_reset: " << (int)deviceStatus[29] << "  ";
+    std::cout << "freq: ";
+    for(int i = 30; i < 34; i ++){
+        std::cout << (int)deviceStatus[i] << " ";
+    }
+    std::cout << "rgb: " << (int)deviceStatus[34] << "  ";
+    std::cout << "fe: " << (int)deviceStatus[35] << "  ";
+    std::cout << "tof: " << (int)deviceStatus[36] << "  ";
+    std::cout << "uac_speak: " << (int)deviceStatus[37] << "  ";
+    std::cout << "uac_mic: " << (int)deviceStatus[38] << "  ";
+    std::cout << "audio_speak: " << (int)deviceStatus[39] << "  ";
+    std::cout << "audio_mic: " << (int)deviceStatus[40] << "  ";
+    std::cout << "dp: " << (int)deviceStatus[41] << "  ";
+    std::cout << "panel: " << (int)deviceStatus[42] << "  ";
+    std::cout << "\n";
+}
+
+void gpsDataCallback(const std::vector<unsigned char>& gpsData)
+{
+    printf("gps data size: %d\n", gpsData.size());
+    for (int i = 0; i < gpsData.size(); i++)
     {
-        printf("devicestatus: %x\n", deviceStatus[i]);
+        printf(" %x", gpsData[i]);
+    }
+    printf("\n");
+}
+
+void gpsDistanceDataCallback(const xv::GPSDistanceData &gpsDistanceData)
+{
+    printf("gps distance: %d, signal: %d\n", gpsDistanceData.distance, gpsDistanceData.signal);
+}
+
+void feDewarpCallback(xv::FisheyeImages const & stereo)
+{
+    static FpsCount fc;
+    fc.tic();
+    static int k = 0;
+    if(k++%50==0){
+        std::cout << "stereo dewarp "  << timeShowStr(stereo.edgeTimestampUs, stereo.hostTimestamp) << stereo.images[0].width << "x" << stereo.images[0].height << "@" << std::round(fc.fps()) << "fps" << std::endl;
     }
 }
 
+void STMDataCallback(const xv::TerrestrialMagnetismData &stmData)
+{
+    std::cout << "STM offset data: " << stmData.offset[0] << ", " << stmData.offset[1] << ", " << stmData.offset[2] << std::endl;
+    std::cout << "STM angles data: " << stmData.angles[0] << ", " << stmData.angles[1] << ", " << stmData.angles[2] << std::endl;
+    std::cout << "STM magnetic data: " << stmData.magnetic[0] << ", " << stmData.magnetic[1] << ", " << stmData.magnetic[2] << std::endl;
+    std::cout << "STM level: " << stmData.level << std::endl;
+}
+
+bool xvhandOpenCLEnvCheck()
+{
+#if defined __ANDROID__
+    std::string envstr = getenv("LD_LIBRARY_PATH");
+    if(enable_output_log)
+    {
+        std::cout << "LD_LIBRARY_PATH = " << envstr << std::endl;
+    }
+    auto idx0 = envstr.find("/vendor/lib64");
+    auto idx1 = envstr.find("/system/vendor/lib64");
+
+    if(idx0 == std::string::npos && idx1 == std::string::npos)
+        return false;
+#endif
+    return true;
+}
+
+xv::FisheyeImages s_images;
+std::mutex s_fe_mutex;
+xv::Pose s_pose;
+void Get4EyeTagDetection(xv::AprilTagDetector& detector)
+{
+    stop = false;
+    tpos = std::thread ([&detector]{
+        while (!stop) {
+            auto t0 = std::chrono::steady_clock::now();
+            std::this_thread::sleep_until(t0 + std::chrono::milliseconds(25));
+            std::vector<xv::TagPose> tags = detector.detect(s_images, 0.16);
+            std::cout << tags.size() << std::endl;
+            for(auto p : tags)
+            {
+                auto tagPose = s_pose * p.transform;
+                auto pitchYawRoll = xv::rotationToPitchYawRoll(tagPose.rotation());
+                std::cout << "tag pose: " << tagPose.x() << "," << tagPose.y() << "," << tagPose.z() << "," << pitchYawRoll[0]*180/M_PI << "," << pitchYawRoll[1]*180/M_PI << "," << pitchYawRoll[2]*180/M_PI << std::endl;
+            }
+        }
+        });
+}
 
 int main( int argc, char* argv[] ) try
 {
     // may change the log level this way :
-    std::shared_ptr<xv::Device> device = nullptr;
+    //std::shared_ptr<xv::Device> device = nullptr;
 
     std::string json = "";
     if (argc == 2) {
         std::ifstream ifs(argv[1]);
         if (!ifs.is_open()) {
-            std::cerr << "Failed to open: " << argv[1] << std::endl;
+            if(enable_output_log){
+                std::cerr << "Failed to open: " << argv[1] << std::endl;
+            }
             return -1;
         }
 
@@ -1602,15 +1953,14 @@ int main( int argc, char* argv[] ) try
         "47: Stop get IMU, set TOF distance mode\n"
         "48: Stop get IMU, set event data\n"
         "49: Stop get IMU, set CNN data\n"
-        "50: Stop get IMU, get gesture stream data\n"
+        "50: Stop get IMU, get gesture stream data.Warning: must first specify the path of opencl,export LD_LIBRARY_PATH=/xxxx/:/vendor/lib64/\n"
         "51: Stop get gesture stream data, get IMU\n"
-        "52: Stop get IMU, get dynamic gesture stream data\n"
+        "52: Stop get IMU, get dynamic gesture stream data.Warning: must first specify the path of opencl,export LD_LIBRARY_PATH=/xxxx/:/vendor/lib64/\n"
         "53: Stop get dynamic gesture stream data, get IMU\n"
-        "54: Stop get IMU, get gesture keypoints\n"
+        "54: Stop get IMU, get gesture keypoints.Warning: must first specify the path of opencl,export LD_LIBRARY_PATH=/xxxx/:/vendor/lib64/\n"
         "55: Stop get gesture keypoints, get IMU\n"
-        "56: Stop get IMU, get gesture keypoints based on slam\n"
+        "56: Stop get IMU, get gesture keypoints based on slam.Warning: must first specify the path of opencl,export LD_LIBRARY_PATH=/xxxx/:/vendor/lib64/\n"
         "57: Stop get gesture keypoints based on slam, get IMU\n"
-        "58: Set gesture configuration file path\n"
         "59: Get display calibration\n"
         "60: Camera on/off switch\n"
         "61: Start april tag detection\n"
@@ -1631,6 +1981,22 @@ int main( int argc, char* argv[] ) try
         "83: Stop RGBD, get IMU\n"
         "84: Change FE framerate into 50Hz\n"
         "85: Change FE framerate into 60Hz\n"
+        "86: Change RGB to AF/MF mode\n"
+        "87: Change RGB local distance\n"
+        "88: Start get device status data with SLAM\n"
+        "89: Stop get device status data and SLAM\n"
+        "90: Start get device status data without IMU\n"
+        "99: Enable/Disable output log\n"
+        "100: Start gps callback\n"
+        "101: Stop gps callback\n"
+        "102: Start gps distance callback\n"
+        "103: Stop gps distance callback\n"
+        "104: Start fe dewarp callback\n"
+        "105: Stop fe dewarp callback\n"
+        "109: Start STM callback\n"
+        "110: Stop STM callback\n"
+        "111: Get four eye apriltag\n"
+        "112: Get QRcode apriltag\n"
         "0 : exit program\n"
         "------------------------------\n"
         "enter select:"
@@ -1643,12 +2009,13 @@ int main( int argc, char* argv[] ) try
     int recvcnt = 0;
     int cnnId = -1;
     int eventId = -1;
-	int iFisheyeId = -1;
+    int iFisheyeId = -1;
     int iFisheyeLId = -1;
     int iFisheyeRId = -1;
     int imuId = -1;
     int poseId = -1;
     int rgbId = -1;
+    int rgb2Id = -1;
     int tofId = -1;
     int planeId = -1;
     int stereoId = -1;
@@ -1660,9 +2027,15 @@ int main( int argc, char* argv[] ) try
     int slamkeypointsId = -1;
     int sgbmId = -1;
     int gazeCallbackId = -1;
-    int GestureEXId = -1;
     int GesturePosEXId = -1;
     int deviceStatusId = -1;
+    int gpsDataId = -1;
+    int gpsDistanceDataId = -1;
+    int feDewarpId = -1;
+    int enrollDataId = -1;
+    int identifyDataId = -1;
+    int STMDataId = -1;
+    int objDetRKNN3588Id = -1;
 
 
 #ifdef _WIN32
@@ -1751,14 +2124,26 @@ int main( int argc, char* argv[] ) try
         switch (cmd) {
         case 1:
         {
-            std::cout << "xvsdk version: " << xv::version() << std::endl;
+            if(enable_output_log){
+                std::cout << "xvsdk version: " << xv::version() << std::endl;
+            }
+            const char slamMode[] = {
+                "0: Normal\n"
+                "1: vision only\n"
+                "2: vision with gyro\n"
+                "------------------------------\n"
+                "enter select:"
+            };
+            slamStartMode = requestCmdAllPlatform(slamMode, sizeof(slamMode));
 
             // return a map of devices with serial number as key, wait at most x seconds if no device detected
-            auto devices = xv::getDevices(10., json);
+            auto devices = xv::getDevices(10., json, nullptr, xv::SlamStartMode(slamStartMode));
 
             // if no device: quit
             if (devices.empty()) {
-                std::cerr << "Timeout for device detection." << std::endl;
+                if(enable_output_log){
+                    std::cerr << "Timeout for device detection." << std::endl;
+                }
                 return EXIT_FAILURE;
             }
 
@@ -1785,7 +2170,9 @@ int main( int argc, char* argv[] ) try
 //                }
 //            });
             if (!device->slam()) {
-                std::cerr << "Host SLAM algorithm not supported." << std::endl;
+                if(enable_output_log){
+                    std::cerr << "Host SLAM algorithm not supported." << std::endl;
+                }
                 return EXIT_FAILURE;
             }
 
@@ -1798,22 +2185,23 @@ int main( int argc, char* argv[] ) try
         break;
         case 2:
         case 19:
+        {
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
             }
 
-			if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
-			}
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
 
             // start mix slam
             device->slam()->start(xv::Slam::Mode::Mixed);
 
             // get mixed 6dof
             startGetPose(device->slam());
-
             break;
+        }
         case 3:
         case 22:
         case 28:
@@ -1825,7 +2213,7 @@ int main( int argc, char* argv[] ) try
             device->slam()->stop();
 
             // get IMU
-			imuId = device->orientationStream()->registerCallback(orientationCallback);
+            imuId = device->orientationStream()->registerCallback(orientationCallback);
 
             break;
         case 4:
@@ -1849,28 +2237,76 @@ int main( int argc, char* argv[] ) try
 
             break;
         case 9:
+        {
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
+                imuId = -1;
+            }
+            const char meun_rgb[] = {
+                "0: Start RGB stream\n"
+                "1: Start RGB1 stream\n"
+                "------------------------------\n"
+                "enter select:"
+            };
+
+            int nRgbCmd = -1;
+
+            nRgbCmd = requestCmdAllPlatform(meun_rgb, sizeof(meun_rgb));
+
+            if(nRgbCmd == 0){
+                // Get rgb data
+                device->colorCamera()->start();
+                rgbId = device->colorCamera()->registerCallback(rgbCallback);
+            }else if(nRgbCmd == 1){
+                device->colorCamera()->startCameras();
+                rgb2Id = device->colorCamera()->registerCam2Callback(rgb2Callback);
+            }else {
+                if(enable_output_log){
+                    std::cout << "bad command\n" << std::endl;
+                }
             }
 
-            // Get rgb data
-            device->colorCamera()->start();
-            rgbId = device->colorCamera()->registerCallback(rgbCallback);
-
             break;
+        }
         case 10:
         case 39:
-            // Stop get rgb data
-            device->colorCamera()->stop();
-            if (device->colorCamera()) {
-                device->colorCamera()->unregisterCallback(rgbId);
+        {
+            const char meun_rgb[] = {
+                "0: Stop RGB stream\n"
+                "1: Stop RGB1 stream\n"
+                "------------------------------\n"
+                "enter select:"
+            };
+
+            int nRgbCmd = -1;
+
+            nRgbCmd = requestCmdAllPlatform(meun_rgb, sizeof(meun_rgb));
+
+            if(nRgbCmd == 0){
+                // Stop get rgb data
+                if (device->colorCamera()) {
+                    device->colorCamera()->stop();
+                    device->colorCamera()->unregisterCallback(rgbId);
+                }
+            }else if(nRgbCmd == 1){
+                if (device->colorCamera()) {
+                    device->colorCamera()->stopCameras();
+                    device->colorCamera()->unregisterCam2Callback(rgb2Id);
+                }
+            }else {
+                if(enable_output_log){
+                    std::cout << "bad command\n" << std::endl;
+                }
             }
 
             // get IMU
-            imuId = device->orientationStream()->registerCallback(orientationCallback);
+            if(imuId == -1){
+                imuId = device->orientationStream()->registerCallback(orientationCallback);
+            }
 
             break;
+        }
         case 11:
             // Stop get IMU
             if(device->orientationStream()){
@@ -1905,13 +2341,13 @@ int main( int argc, char* argv[] ) try
                 device->orientationStream()->unregisterCallback( imuId );
             }
 
-			if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
-			}
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
 
-            auto slam = device->slam();            
-            auto slamEx = dynamic_cast<xv::SlamEx*>(slam.get());            
-            //slamEx->setEnableSurface(true);            
+            auto slam = device->slam();
+            auto slamEx = dynamic_cast<xv::SlamEx*>(slam.get());
+            //slamEx->setEnableSurface(true);
             //slamEx->setEnableSurfacePlanes(true);            // Get plane data
             // Get plane data
             device->tofCamera()->start();
@@ -1973,24 +2409,36 @@ int main( int argc, char* argv[] ) try
         {
             device->display()->open();
             std::this_thread::sleep_for(std::chrono::seconds(3));
-            std::cout << "set brightness level to 2" << std::endl;
+            if(enable_output_log){
+                std::cout << "set brightness level to 2" << std::endl;
+            }
             bool bok = device->display()->setBrightnessLevel(2);
             if (bok)
             {
-                std::cout << "set brightness level to 2 succeed" << std::endl;
+                if(enable_output_log){
+                    std::cout << "set brightness level to 2 succeed" << std::endl;
+                }
             }
             else {
-                std::cout << "set brightness level to 2 failed" << std::endl;
+                if(enable_output_log){
+                    std::cout << "set brightness level to 2 failed" << std::endl;
+                }
             }
             std::this_thread::sleep_for(std::chrono::seconds(3));
-            std::cout << "set brightness level to 9" << std::endl;
+            if(enable_output_log){
+                std::cout << "set brightness level to 9" << std::endl;
+            }
             bok = device->display()->setBrightnessLevel(9);
             if (bok)
             {
-                std::cout << "set brightness level to 9 succeed" << std::endl;
+                if(enable_output_log){
+                    std::cout << "set brightness level to 9 succeed" << std::endl;
+                }
             }
             else {
-                std::cout << "set brightness level to 9 failed" << std::endl;
+                if(enable_output_log){
+                    std::cout << "set brightness level to 9 failed" << std::endl;
+                }
             }
             break;
         }
@@ -2001,35 +2449,45 @@ int main( int argc, char* argv[] ) try
             // save shared map
             //slam->stopSlamAndSaveMap(map_shared_filename);
             if (mapStream.open(map_filename, std::ios::binary | std::ios::out | std::ios::trunc) == nullptr) {
-                std::cout << "open " << map_filename << " failed." << std::endl;
+                if(enable_output_log){
+                    std::cout << "open " << map_filename << " failed." << std::endl;
+                }
                 break;
             }
             device->slam()->saveMapAndSwitchToCslam(mapStream, cslamSavedCallback, cslamLocalizedCallback);
 
             break;
         case 21:
-			// Stop get IMU
-			if (device->orientationStream()) {
-				device->orientationStream()->unregisterCallback(imuId);
-			}
+            // Stop get IMU
+            if (device->orientationStream()) {
+                device->orientationStream()->unregisterCallback(imuId);
+            }
             // stop mix slam
-            std::cout << "stop slam" << std::endl;
+            if(enable_output_log){
+                std::cout << "stop slam" << std::endl;
+            }
             device->slam()->stop();
 
-			if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
-			}
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
 
             //std::this_thread::sleep_for( std::chrono::seconds(1) );
 
             // start mix slam
-            std::cout << "start slam" << std::endl;
+            if(enable_output_log){
+                std::cout << "start slam" << std::endl;
+            }
             device->slam()->start(xv::Slam::Mode::Mixed);
 
             // start cslam using shared map
-            std::cout << "load cslam map and switch to cslam" << std::endl;
+            if(enable_output_log){
+                std::cout << "load cslam map and switch to cslam" << std::endl;
+            }
             if (mapStream.open(map_filename, std::ios::binary | std::ios::in) == nullptr) {
-                std::cout << "open " << map_filename << " failed." << std::endl;
+                if(enable_output_log){
+                    std::cout << "open " << map_filename << " failed." << std::endl;
+                }
                 break;
             }
             device->slam()->loadMapAndSwitchToCslam(
@@ -2045,9 +2503,9 @@ int main( int argc, char* argv[] ) try
                 device->orientationStream()->unregisterCallback( imuId );
             }
 
-			if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
-			}
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
 
             // Get plane data
             // !!! Must call registerStereoPlanesCallback before slam()->start
@@ -2152,9 +2610,9 @@ int main( int argc, char* argv[] ) try
                 device->orientationStream()->unregisterCallback( imuId );
             }
 
-			if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
-			}
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
 
             // switch to Mixed mode
             device->slam()->start(xv::Slam::Mode::Mixed);
@@ -2169,7 +2627,7 @@ int main( int argc, char* argv[] ) try
             }
 
             if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
             }
 
             // switch to Mixed mode
@@ -2190,8 +2648,10 @@ int main( int argc, char* argv[] ) try
             }
 
             // Get rgb calibration
-            std::cout << "RGB calibration:" << std::endl;
-            std::cout << device->colorCamera()->calibration() << std::endl;
+            if(enable_output_log){
+                std::cout << "RGB calibration:" << std::endl;
+                std::cout << device->colorCamera()->calibration() << std::endl;
+            }
 
             break;
         case 38:
@@ -2199,6 +2659,7 @@ int main( int argc, char* argv[] ) try
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
+                imuId = -1;
             }
 
             device->colorCamera()->start();
@@ -2264,12 +2725,14 @@ int main( int argc, char* argv[] ) try
             setting.args.val[0] = nRgbFormat;
 
             bool bOk = (nRgbFormat <= 4) && device->control(setting);
-            if (bOk)
-            {
-                std::cout << "RGB format setting successfully" << std::endl;
-            }
-            else {
-                std::cout << "RGB format setting failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "RGB format setting successfully" << std::endl;
+                }
+                else {
+                    std::cout << "RGB format setting failed" << std::endl;
+                }
             }
         }
         break;
@@ -2362,12 +2825,14 @@ int main( int argc, char* argv[] ) try
                 break;
             }
             bool bOk = device->control(setting);
-            if (bOk)
-            {
-                std::cout << "RGB setting successfully" << std::endl;
-            }
-            else {
-                std::cout << "RGB setting failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "RGB setting successfully" << std::endl;
+                }
+                else {
+                    std::cout << "RGB setting failed" << std::endl;
+                }
             }
 
         }
@@ -2409,12 +2874,14 @@ int main( int argc, char* argv[] ) try
             nRightTime = requestCmdAllPlatform(meun_EyeTrackingRightTime, sizeof(meun_EyeTrackingRightTime));
 
             bool bOk = device->eyetracking()->setExposure(nLeftGain, nLeftTime, nRightGain, nRightTime);
-            if (bOk)
-            {
-                std::cout << "Eyetracking exposure setting successfully" << std::endl;
-            }
-            else {
-                std::cout << "Eyetracking exposure setting failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "Eyetracking exposure setting successfully" << std::endl;
+                }
+                else {
+                    std::cout << "Eyetracking exposure setting failed" << std::endl;
+                }
             }
         }
         break;
@@ -2451,12 +2918,14 @@ int main( int argc, char* argv[] ) try
 
 
             bool bOk = device->eyetracking()->setLedBrighness(nEye, nLed, nBright);
-            if (bOk)
-            {
-                std::cout << "Eyetracking setting successfully" << std::endl;
-            }
-            else {
-                std::cout << "Eyetracking setting failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "Eyetracking setting successfully" << std::endl;
+                }
+                else {
+                    std::cout << "Eyetracking setting failed" << std::endl;
+                }
             }
         }
         break;
@@ -2470,8 +2939,10 @@ int main( int argc, char* argv[] ) try
             device->fisheyeCameras()->unregisterCallback(rgbId);
 
             // Get Fisheye calibration
-            std::cout << "Fisheye calibration:" << std::endl;
-            std::cout << device->fisheyeCameras()->calibration() << std::endl;
+            if(enable_output_log){
+                std::cout << "Fisheye calibration:" << std::endl;
+                std::cout << std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(device->fisheyeCameras())->calibrationEx() << std::endl;
+            }
             break;
         case 45:
             // Stop get IMU
@@ -2480,8 +2951,10 @@ int main( int argc, char* argv[] ) try
             }
 
             // Get TOF calibration
-            std::cout << "TOF calibration:" << std::endl;
-            std::cout << device->tofCamera()->calibration() << std::endl;
+            if(enable_output_log){
+                std::cout << "TOF calibration:" << std::endl;
+                std::cout << device->tofCamera()->calibration() << std::endl;
+            }
             break;
         case 46:
         {
@@ -2503,12 +2976,14 @@ int main( int argc, char* argv[] ) try
             nStreamMode = requestCmdAllPlatform(meun_TOFStreamMode, sizeof(meun_TOFStreamMode));
 
             bool bOk = SetTofStreamMode(nStreamMode, device->tofCamera());
-            if (bOk)
-            {
-                std::cout << "Tof distance setting successfully" << std::endl;
-            }
-            else {
-                std::cout << "Tof distance setting failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "Tof distance setting successfully" << std::endl;
+                }
+                else {
+                    std::cout << "Tof distance setting failed" << std::endl;
+                }
             }
         }
         break;
@@ -2530,12 +3005,14 @@ int main( int argc, char* argv[] ) try
             nDisMode = requestCmdAllPlatform(meun_TOFDistance, sizeof(meun_TOFDistance));
 
             bool bOk = SetTofDistanceMode(nDisMode, device->tofCamera());
-            if (bOk)
-            {
-                std::cout << "Tof distance setting successfully" << std::endl;
-            }
-            else {
-                std::cout << "Tof distance setting failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "Tof distance setting successfully" << std::endl;
+                }
+                else {
+                    std::cout << "Tof distance setting failed" << std::endl;
+                }
             }
         }
         break;
@@ -2543,7 +3020,9 @@ int main( int argc, char* argv[] ) try
         {
             if (device == nullptr)
             {
-                std::cerr << "Device is nullptr! Please init first..." << std::endl;
+                if(enable_output_log){
+                    std::cerr << "Device is nullptr! Please init first..." << std::endl;
+                }
                 break;
             }
             device->eventStream()->unregisterCallback(imuId);
@@ -2585,8 +3064,10 @@ int main( int argc, char* argv[] ) try
                     vecWrite.push_back(0x67);
                     vecWrite.push_back(0x00);
                     ret = device->hidWriteAndRead(vecWrite, vecRead);
-                    if (!ret)
-                        std::cerr << "close als error!" << std::endl;
+                    if(enable_output_log){
+                        if (!ret)
+                            std::cerr << "close als error!" << std::endl;
+                    }
                     //recover event catch
                     device->eventStream()->stop();
                     device->eventStream()->start();
@@ -2603,16 +3084,18 @@ int main( int argc, char* argv[] ) try
                     vecWrite.push_back(0x67);
                     vecWrite.push_back(0x01);
                     ret = device->hidWriteAndRead(vecWrite, vecRead);
-                    if (!ret)
-                        std::cerr << "open als error!" << std::endl;
-                    else {
-                        std::cout << "open als success!" << std::endl;
-                        std::cout << "read data: " << std::endl;
-                        for (int i = 0; i < vecRead.size(); i++)
-                        {
-                            std::cout << std::hex << (unsigned int)(unsigned char)vecRead.at(i) << " ";
+                    if(enable_output_log){
+                        if (!ret)
+                            std::cerr << "open als error!" << std::endl;
+                        else {
+                            std::cout << "open als success!" << std::endl;
+                            std::cout << "read data: " << std::endl;
+                            for (int i = 0; i < vecRead.size(); i++)
+                            {
+                                std::cout << std::hex << (unsigned int)(unsigned char)vecRead.at(i) << " ";
+                            }
+                            std::cout << std::endl;
                         }
-                        std::cout << std::endl;
                     }
                     //recover event catch
                     device->eventStream()->stop();
@@ -2631,10 +3114,12 @@ int main( int argc, char* argv[] ) try
                     vecWrite.push_back(0x67);
                     vecWrite.push_back(0x00);
                     ret = device->hidWriteAndRead(vecWrite, vecRead);
-                    if (!ret)
-                        std::cerr << "close als error!" << std::endl;
-                    else {
-                        std::cout << "close als success!" << std::endl;
+                    if(enable_output_log){
+                        if (!ret)
+                            std::cerr << "close als error!" << std::endl;
+                        else {
+                            std::cout << "close als success!" << std::endl;
+                        }
                     }
                     //recover event catch
                     device->eventStream()->stop();
@@ -2651,7 +3136,9 @@ int main( int argc, char* argv[] ) try
         {
             if (device == nullptr)
             {
-                std::cerr << "Device is nullptr! Please init first..." << std::endl;
+                if(enable_output_log){
+                    std::cerr << "Device is nullptr! Please init first..." << std::endl;
+                }
                 break;
             }
             if (device->orientationStream()) {
@@ -2660,16 +3147,22 @@ int main( int argc, char* argv[] ) try
             }
             if (!device->objectDetector())
             {
-                std::cerr << "No object detector" << std::endl;
+                if(enable_output_log){
+                    std::cerr << "No object detector" << std::endl;
+                }
                 break;
             }
             cnnId = device->objectDetector()->registerCallback(cnnCallback);
             device->objectDetector()->start();
 
             if (!device->objectDetector()->setModel("CNN_2x8x_r14_5.blob"))
-                std::cerr << "***setModel error!" << std::endl;
+                if(enable_output_log){
+                    std::cerr << "***setModel error!" << std::endl;
+                }
             if (!device->objectDetector()->setDescriptor("config_tensorflow.json"))
-                std::cerr << "***setDescriptor error!" << std::endl;
+                if(enable_output_log){
+                    std::cerr << "***setDescriptor error!" << std::endl;
+                }
 
             const char meunCamera[] = {
                 "1: camera source recognition\n"
@@ -2689,14 +3182,26 @@ int main( int argc, char* argv[] ) try
                 case 1:
                 {
                     xv::ObjectDetector::Source source = device->objectDetector()->getSource();
-                    if (source == xv::ObjectDetector::Source::LEFT)
-                        std::cout << "-----------------camera source: LEFT-----------------" << std::endl;
-                    else if (source == xv::ObjectDetector::Source::RIGHT)
-                        std::cout << "-----------------camera source: RIGHT-----------------" << std::endl;
-                    else if (source == xv::ObjectDetector::Source::RGB)
-                        std::cout << "-----------------camera source: RGB-----------------" << std::endl;
-                    else if (source == xv::ObjectDetector::Source::TOF)
-                        std::cout << "-----------------camera source: TOF-----------------" << std::endl;
+                    if (source == xv::ObjectDetector::Source::LEFT){
+                        if(enable_output_log){
+                            std::cout << "-----------------camera source: LEFT-----------------" << std::endl;
+                        }
+                    }
+                    else if (source == xv::ObjectDetector::Source::RIGHT){
+                        if(enable_output_log){
+                            std::cout << "-----------------camera source: RIGHT-----------------" << std::endl;
+                        }
+                    }
+                    else if (source == xv::ObjectDetector::Source::RGB){
+                        if(enable_output_log){
+                            std::cout << "-----------------camera source: RGB-----------------" << std::endl;
+                        }
+                    }
+                    else if (source == xv::ObjectDetector::Source::TOF){
+                        if(enable_output_log){
+                            std::cout << "-----------------camera source: TOF-----------------" << std::endl;
+                        }
+                    }
                     break;
                 }
                 case 2:
@@ -2789,14 +3294,27 @@ int main( int argc, char* argv[] ) try
         }
         case 50:
         {
+            if(!xvhandOpenCLEnvCheck())
+            {
+                if(enable_output_log){
+                    std::cout << "gesture start failed! The path of opencl is not included in LD_LIBRARY_PATH" << std::endl;
+                    std::cout << "you should call export LD_LIBRARY_PATH=/xxxx:/vendor/lib64/" << std::endl;
+                }
+                break;
+            }
+
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
             }
+            if(enable_output_log){
+                std::cout << "gesture start" << std::endl;
+            }
 
-            std::cout << "gesture start" << std::endl;
             device->gesture()->start();
-            std::cout << "gesture register" << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture register" << std::endl;
+            }
             gestureId = device->gesture()->registerCallback(gestureCallback);
 
             break;
@@ -2806,26 +3324,43 @@ int main( int argc, char* argv[] ) try
             bool ok = device->gesture()->unregisterCallback(gestureId);
             if (ok)
             {
-                std::cout << "unregister callback successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "unregister callback successfully" << std::endl;
+                }
             }
             ok = device->gesture()->stop();
             if (ok)
             {
-                std::cout << "gesture stop successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "gesture stop successfully" << std::endl;
+                }
             }
             imuId = device->orientationStream()->registerCallback(orientationCallback);
             break;
         }
         case 52:
         {
+            if(!xvhandOpenCLEnvCheck())
+            {
+                if(enable_output_log){
+                    std::cout << "gesture start failed! The path of opencl is not included in LD_LIBRARY_PATH" << std::endl;
+                    std::cout << "you should call export LD_LIBRARY_PATH=/xxxx:/vendor/lib64/" << std::endl;
+                }
+                break;
+            }
+
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
             }
+            if(enable_output_log){
+                std::cout << "gesture start" << std::endl;
+            }
 
-            std::cout << "gesture start" << std::endl;
             device->gesture()->start();
-            std::cout << "gesture dynamic register" << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture dynamic register" << std::endl;
+            }
             dynamicgestureId = device->gesture()->registerDynamicGestureCallback(dynamicgestureCallback);
 
             break;
@@ -2835,26 +3370,43 @@ int main( int argc, char* argv[] ) try
             bool ok = device->gesture()->UnregisterDynamicGestureCallback(dynamicgestureId);
             if (ok)
             {
-                std::cout << "unregister callback successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "unregister callback successfully" << std::endl;
+                }
             }
             ok = device->gesture()->stop();
             if (ok)
             {
-                std::cout << "gesture stop successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "gesture stop successfully" << std::endl;
+                }
             }
             imuId = device->orientationStream()->registerCallback(orientationCallback);
             break;
         }
         case 54:
         {
+            if(!xvhandOpenCLEnvCheck())
+            {
+                if(enable_output_log){
+                    std::cout << "gesture start failed! The path of opencl is not included in LD_LIBRARY_PATH" << std::endl;
+                    std::cout << "you should call export LD_LIBRARY_PATH=/xxxx:/vendor/lib64/" << std::endl;
+                }
+                break;
+            }
+
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
             }
+            if(enable_output_log){
+                std::cout << "gesture start" << std::endl;
+            }
 
-            std::cout << "gesture start" << std::endl;
             device->gesture()->start();
-            std::cout << "gesture keypoints register " << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture keypoints register " << std::endl;
+            }
             keypointsId = device->gesture()->registerKeypointsCallback(keypointsCallback);
 
             break;
@@ -2864,27 +3416,53 @@ int main( int argc, char* argv[] ) try
             bool ok = device->gesture()->unregisterKeypointsCallback(keypointsId);
             if (ok)
             {
-                std::cout << "unregister callback successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "unregister callback successfully" << std::endl;
+                }
             }
             ok = device->gesture()->stop();
             if (ok)
             {
-                std::cout << "gesture stop successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "gesture stop successfully" << std::endl;
+                }
             }
             imuId = device->orientationStream()->registerCallback(orientationCallback);
             break;
         }
         case 56:
         {
+            if(!xvhandOpenCLEnvCheck())
+            {
+                if(enable_output_log){
+                    std::cout << "gesture start failed! The path of opencl is not included in LD_LIBRARY_PATH" << std::endl;
+                    std::cout << "first call export LD_LIBRARY_PATH=/xxxx:/vendor/lib64/" << std::endl;
+                }
+                break;
+            }
+
             // Stop get IMU
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
             }
+            if(enable_output_log){
+                std::cout << "slam start" << std::endl;
+            }
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
+            // start mix slam
+            device->slam()->start(xv::Slam::Mode::Mixed);
 
-            std::cout << "gesture start" << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture start" << std::endl;
+            }
+            device->gesture()->setPlatform(3, true);
+
             bool bOk = device->gesture()->start();
-
-            std::cout << "gesture slam keypoints register " << std::endl;
+            if(enable_output_log){
+                std::cout << "gesture slam keypoints register " << std::endl;
+            }
             slamkeypointsId = device->gesture()->registerSlamKeypointsCallback(slamkeypointsCallback);
 
             break;
@@ -2894,39 +3472,26 @@ int main( int argc, char* argv[] ) try
             bool ok = device->gesture()->unregisterSlamKeypointsCallback(slamkeypointsId);
             if (ok)
             {
-                std::cout << "unregister callback successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "unregister callback successfully" << std::endl;
+                }
             }
 
             ok = device->gesture()->stop();
             if (ok)
             {
-                std::cout << "gesture stop successfully" << std::endl;
+                if(enable_output_log){
+                    std::cout << "gesture stop successfully" << std::endl;
+                }
             }
+
+            // stop mix slam
+            device->slam()->stop();
+            if(enable_output_log){
+                std::cout << "slam stop" << std::endl;
+            }
+
             imuId = device->orientationStream()->registerCallback(orientationCallback);
-            break;
-        }
-        case 58:
-        {
-            // Stop get IMU
-            if(device->orientationStream()){
-                device->orientationStream()->unregisterCallback( imuId );
-            }
-
-            std::string config = "";
-            std::cout << "please input new address" << std::endl;
-            std::cin >> config;
-
-            device->gesture()->setConfigPath(config);
-
-            bool bOk = device->gesture()->start();
-            if (bOk)
-            {
-                std::cout << "set configuration path successfully" << std::endl;
-            }
-            else {
-                std::cout << "set configuration path failed" << std::endl;
-            }
-
             break;
         }
         case 59:
@@ -2939,8 +3504,10 @@ int main( int argc, char* argv[] ) try
             if (device->display())
             {
                 device->display()->open();
-                std::cout << "Display calibration:" << std::endl;
-                std::cout << device->display()->calibration() << std::endl;
+                if(enable_output_log){
+                    std::cout << "Display calibration:" << std::endl;
+                    std::cout << device->display()->calibration() << std::endl;
+                }
             }
 
             break;
@@ -2988,25 +3555,30 @@ int main( int argc, char* argv[] ) try
                 device->orientationStream()->unregisterCallback( imuId );
             }
 
-			if (device->fisheyeCameras()) {
-				iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
-			}
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
 
             device->fisheyeCameras()->start();
 
             device->slam()->start(xv::Slam::Mode::Mixed);
             //std::dynamic_pointer_cast<xv::DeviceEx>(device)->slam2()->start(xv::Slam::Mode::Edge);
-
-            std::cout << "start  startTagDetector" << std::endl;
+            if(enable_output_log){
+                std::cout << "start  startTagDetector" << std::endl;
+            }
             tagDetectorId = std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(device->fisheyeCameras())->startTagDetector(device->slam(), "36h11", 0.16, 50.);
 
             if (!tagDetectorId.empty())
             {
-                std::cout << "start  GetTagDetection" << std::endl;
+                if(enable_output_log){
+                    std::cout << "start  GetTagDetection" << std::endl;
+                }
                 GetTagDetection(device->fisheyeCameras(), tagDetectorId);
             }
             else {
-                std::cout << "tagDetectorId is empty" << std::endl;
+                if(enable_output_log){
+                    std::cout << "tagDetectorId is empty" << std::endl;
+                }
             }
             break;
         }
@@ -3014,12 +3586,14 @@ int main( int argc, char* argv[] ) try
         {
             StopGetTag();
             bool result = std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(device->fisheyeCameras())->stopTagDetector(tagDetectorId);
-            if (result)
-            {
-                std::cout << "stopTagDetector successfully" << std::endl;
-            }
-            else {
-                std::cout << "stopTagDetector failed" << std::endl;
+            if(enable_output_log){
+                if (result)
+                {
+                    std::cout << "stopTagDetector successfully" << std::endl;
+                }
+                else {
+                    std::cout << "stopTagDetector failed" << std::endl;
+                }
             }
             imuId = device->orientationStream()->registerCallback(orientationCallback);
             break;
@@ -3033,33 +3607,51 @@ int main( int argc, char* argv[] ) try
             if (device->fisheyeCameras()) {
                 iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
             }
-            std::cout << "call tofcamera start" << std::endl;
+            if(enable_output_log){
+                std::cout << "call tofcamera start" << std::endl;
+            }
             bool useTof = device->tofCamera()->start();
-
-            std::cout << "setFramerate(5.)" << std::endl;
+            if(enable_output_log){
+                std::cout << "setFramerate(5.)" << std::endl;
+            }
             device->tofCamera()->setFramerate(5.);
             std::this_thread::sleep_for(std::chrono::seconds(1));
-
-            std::cout << "setFramerate(15.)" << std::endl;
+            if(enable_output_log){
+                std::cout << "setFramerate(15.)" << std::endl;
+            }
             device->tofCamera()->setFramerate(15.);
             std::this_thread::sleep_for(std::chrono::seconds(1));
-
-            std::cout << "setFramerate(5.)" << std::endl;
+            if(enable_output_log){
+                std::cout << "setFramerate(5.)" << std::endl;
+            }
             device->tofCamera()->setFramerate(5.);
-
-            std::cout << "call slam start" << std::endl;
+            if(enable_output_log){
+                std::cout << "call slam start" << std::endl;
+            }
             auto slam = device->slam();
             if (useTof && slam)
             {
                 auto slamEx = dynamic_cast<xv::SlamEx*>(slam.get());
-                std::cout << "call setEnableSurface" << std::endl;
-                slamEx->setEnableSurface(true);
-                std::cout << "call setEnableSurfaceTexturing" << std::endl;
+                if(enable_output_log){
+                    std::cout << "call setEnableSurfaceReconstruction" << std::endl;
+                }
+                slamEx->setEnableSurfaceReconstruction(true);
+                if(enable_output_log){
+                    std::cout << "call setEnableSurfaceTexturing" << std::endl;
+                }
                 slamEx->setEnableSurfaceTexturing(false);
-                std::cout << "call registerSurfaceCallback" << std::endl;
+                if(enable_output_log){
+                    std::cout << "call setSurfacePointCloudDecimationFactor" << std::endl;
+                }
+                slamEx->setSurfacePointCloudDecimationFactor(3);
+                if(enable_output_log){
+                    std::cout << "call registerSurfaceCallback" << std::endl;
+                }
                 slamEx->registerSurfaceCallback([](std::shared_ptr<const xv::ex::Surfaces> ptr)
                     {
+                    if(enable_output_log){
                         std::cout << "get surface callback" << std::endl;
+                    }
                     });
                 device->slam()->start();
             }
@@ -3093,11 +3685,15 @@ int main( int argc, char* argv[] ) try
 
             if (!ret)
             {
-                std::cout << "hid command 21 send failed" << std::endl;
+                if(enable_output_log){
+                    std::cout << "hid command 21 send failed" << std::endl;
+                }
                 break;
             }
             else {
-                std::cout << "send commad 02 fe 20 21 succeed" << std::endl;
+                if(enable_output_log){
+                    std::cout << "send commad 02 fe 20 21 succeed" << std::endl;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(32));
                 vecWrite[0] = 0x02;
                 vecWrite[1] = 0xfe;
@@ -3106,20 +3702,30 @@ int main( int argc, char* argv[] ) try
                 ret = device->hidWriteAndRead(vecWrite, vecRead);
                 if (!ret)
                 {
-                    std::cout << "hid command 22 send failed" << std::endl;
+                    if(enable_output_log){
+                        std::cout << "hid command 22 send failed" << std::endl;
+                    }
                     break;
                 }
                 else {
-                    std::cout << "send commad 02 fe 20 22 succeed" << std::endl;
+                    if(enable_output_log){
+                        std::cout << "send commad 02 fe 20 22 succeed" << std::endl;
+                    }
                 }
             }
 
             // get event data
-            std::cout << "start eventstream" << std::endl;
+            if(enable_output_log){
+                std::cout << "start eventstream" << std::endl;
+            }
             device->eventStream()->start();
-            std::cout << "register event callback" << std::endl;
+            if(enable_output_log){
+                std::cout << "register event callback" << std::endl;
+            }
             eventId = device->eventStream()->registerCallback(eventCallback);
-            std::cout << "event callback id = " << eventId << std::endl;
+            if(enable_output_log){
+                std::cout << "event callback id = " << eventId << std::endl;
+            }
 
             break;
         }
@@ -3142,15 +3748,15 @@ int main( int argc, char* argv[] ) try
             sgbmId = device->sgbmCamera()->registerCallback(SGBMCallback::sgbmCallback);
             setSGBMCameraPara(device);
             bool bOk = device->sgbmCamera()->start(default_config);
-
-            if (bOk)
-            {
-                std::cout << "start SGBM successfully" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "start SGBM successfully" << std::endl;
+                }
+                else {
+                    std::cout << "start SGBM failed" << std::endl;
+                }
             }
-            else {
-                std::cout << "start SGBM failed" << std::endl;
-            }
-
             break;
         }
         case 68:
@@ -3158,13 +3764,14 @@ int main( int argc, char* argv[] ) try
             // Stop SGBM
             device->sgbmCamera()->unregisterCallback(sgbmId);
             bool bOk = device->sgbmCamera()->stop();
-
-            if (bOk)
-            {
-                std::cout << "stop SGBM successfully" << std::endl;
-            }
-            else {
-                std::cout << "stop SGBM failed" << std::endl;
+            if(enable_output_log){
+                if (bOk)
+                {
+                    std::cout << "stop SGBM successfully" << std::endl;
+                }
+                else {
+                    std::cout << "stop SGBM failed" << std::endl;
+                }
             }
             imuId = device->orientationStream()->registerCallback(orientationCallback);
             break;
@@ -3177,18 +3784,18 @@ int main( int argc, char* argv[] ) try
             }
 
             //only support android platform with gaze.
-            std::cout << "gaze start" << std::endl;
+            if(enable_output_log){
+                std::cout << "gaze start" << std::endl;
+            }
             if (device->gaze())
             {
-                bool bOk = device->gaze()->start();
-                if (bOk)
-                {
+                device->gaze()->start();
+                if(enable_output_log){
                     std::cout << "start register callback" << std::endl;
-                    gazeCallbackId = device->gaze()->registerCallback(gazeCallback);
-                    std::cout << "gaze call back id = " << gazeCallbackId << std::endl;
                 }
-                else {
-                    std::cout << "gaze start failed" << std::endl;
+                gazeCallbackId = device->gaze()->registerCallback(gazeCallback);
+                if(enable_output_log){
+                    std::cout << "gaze call back id = " << gazeCallbackId << std::endl;
                 }
             }
 
@@ -3204,95 +3811,23 @@ int main( int argc, char* argv[] ) try
             imuId = device->orientationStream()->registerCallback(orientationCallback);
             break;
         }
-        case 71:
-        {
-            if (device->orientationStream()) {
-                device->orientationStream()->unregisterCallback(imuId);
-            }
-            //only support android platform with gesture.
-            void* JVM;
-            // std::string password = "test";
-            
-            printf("gestureEX()->start\n");
-            std::string so_path = "";
-            device->gestureEX()->start(JVM,so_path);
-            printf("gestureEX()->registerCallback\n");
-            GestureEXId = device->gestureEX()->registerCallback(GestureCallbackEX);
-            break;
-        }
-        case 72:
-        {
-            //only support android platform with gesture.
-            if(device->gestureEX()){
-                device->gestureEX()->unregisterCallback(GestureEXId);
-                device->gestureEX()->stop();
-            }
-            imuId = device->orientationStream()->registerCallback(orientationCallback);
-            break;
-        }
-        case 73:
-        {
-            if (device->orientationStream()) {
-                device->orientationStream()->unregisterCallback(imuId);
-            }
-            //only support android platform with gesture.
-            void* JVM;
-            // std::string password = "test";
-
-            std::string so_path = "";
-            device->gestureEX()->start(JVM,so_path);
-            GesturePosEXId = device->gestureEX()->registerPosCallback(GesturePosCallbackEX);
-
-            break;
-        }
-        case 74:
-        {
-            //only support android platform with gesture.
-            if(device->gestureEX()){
-                device->gestureEX()->unregisterPosCallback(GesturePosEXId);
-                device->gestureEX()->stop();
-            }
-            imuId = device->orientationStream()->registerCallback(orientationCallback);
-            break;
-        }
-        case 75:
-        {
-            if (device->orientationStream()) {
-                device->orientationStream()->unregisterCallback(imuId);
-            }
-            //only support android platform with gesture.
-            std::atomic<bool> stop(false);
-            std::thread threadLoop60Hz([&stop, &device] {
-
-                while (!stop) {
-                    auto now = std::chrono::steady_clock::now();
-                    void* JVM;
-                    // std::string password = "test";
-                    std::string so_path = "";
-                    device->gestureEX()->start(JVM,so_path);
-                    xv::Pose pos;
-                    bool feGetposeat = device->slam()->getPoseAt(pos, now.time_since_epoch().count());
-                    xv::GestureData gesture = device->gestureEX()->getGesture(pos, now.time_since_epoch().count());
-                    std::vector<xv::Pose> gesturePos = device->gestureEX()->GetGesturePose(pos, now.time_since_epoch().count());
-                    // to simulate the 60Hz loop
-                    std::this_thread::sleep_until(now + std::chrono::microseconds(long(1. / 60. * 1e6)));
-                }
-                });
-            break;
-        }
         case 76:
         {
             if (device->orientationStream()) {
                 device->orientationStream()->unregisterCallback(imuId);
             }
-#if !defined __ANDROID__ || !defined __x86_64__            
+#if !defined __ANDROID__ || !defined __x86_64__
             //only support android platform with gaze.
             if (device->gaze())
             {
-                std::cout << "start StartCalibration" << std::endl;
+                if(enable_output_log){
+                    std::cout << "start StartCalibration" << std::endl;
+                }
                 xv::GazeCalibration calibration;
                 int result = calibration.StartCalibration(0);
-                std::cout << "StartCalibration result : " << result << std::endl;
+                if(enable_output_log){
+                    std::cout << "StartCalibration result : " << result << std::endl;
+                }
             }
 #endif
             break;
@@ -3302,7 +3837,9 @@ int main( int argc, char* argv[] ) try
             if(device->orientationStream()){
                 device->orientationStream()->unregisterCallback( imuId );
             }
+            std::vector<unsigned char> result;
 
+            bool bOK = device->hidWriteAndRead({0x02, 0xfe, 0x36, 01}, result);
             deviceStatusId = device->deviceStatus()->registerCallback(deviceStatusCallback);
             break;
         }
@@ -3409,10 +3946,12 @@ int main( int argc, char* argv[] ) try
             std::vector<unsigned char> result;
 
             bool bOK = device->hidWriteAndRead({0x02, 0xab, 0xce, 50}, result);
-            if(bOK)
-                std::cout << "set FE framerate to 50Hz successfully" << std::endl;
-            else
-                std::cout << "set FE framerate to 50Hz failed" << std::endl;
+            if(enable_output_log){
+                if(bOK)
+                    std::cout << "set FE framerate to 50Hz successfully" << std::endl;
+                else
+                    std::cout << "set FE framerate to 50Hz failed" << std::endl;
+            }
 
             break;
         }
@@ -3425,16 +3964,359 @@ int main( int argc, char* argv[] ) try
             std::vector<unsigned char> result;
 
             bool bOK = device->hidWriteAndRead({0x02, 0xab, 0xce, 60}, result);
-            if(bOK)
-                std::cout << "set FE framerate to 60Hz successfully" << std::endl;
-            else
-                std::cout << "set FE framerate to 60Hz failed" << std::endl;
+            if(enable_output_log){
+                if(bOK)
+                    std::cout << "set FE framerate to 60Hz successfully" << std::endl;
+                else
+                    std::cout << "set FE framerate to 60Hz failed" << std::endl;
+            }
+            break;
+        }
+        case 86:
+        {
+            const char meun_RGBmode[] = {
+                    "0: AF\n"
+                    "1: MF\n"
+                    "------------------------------\n"
+                    "enter select:"
+            };
+            int rgbMode = requestCmdAllPlatform(meun_RGBmode, sizeof(meun_RGBmode));
 
+            if(rgbMode == 0) device->colorCamera()->setRGBMode(xv::ColorCamera::Mode::AF);
+            else if(rgbMode == 1) device->colorCamera()->setRGBMode(xv::ColorCamera::Mode::MF);
+            break;
+        }
+        case 87:
+        {
+            const char meun_RGBDistance[] = {
+                    "input RGB local distance(1-255)\n"
+                    "------------------------------\n"
+                    "enter select:"
+            };
+            int rgbDistance = requestCmdAllPlatform(meun_RGBDistance, sizeof(meun_RGBDistance));
+            device->colorCamera()->setRGBFocalDistance(rgbDistance);
+            break;
+        }
+        case 88:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+            std::vector<unsigned char> result;
+            if (device->fisheyeCameras()) {
+                iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            }
+
+            // start mix slam
+            device->slam()->start(xv::Slam::Mode::Mixed);
+
+            // get mixed 6dof
+            bool bOK = device->hidWriteAndRead({0x02, 0xfe, 0x36, 01}, result);
+            deviceStatusId = device->deviceStatus()->registerCallback(deviceStatusCallback);
+            break;
+        }
+        case 89:
+        {
+            if(device->deviceStatus()){
+                device->deviceStatus()->unregisterCallback(deviceStatusId);
+            }
+            // stop mix slam
+            device->slam()->stop();
+
+            // get IMU
+            imuId = device->orientationStream()->registerCallback(orientationCallback);
+            break;
+        }
+        case 90:
+        {
+            if(enable_output_log){
+                std::cout << "xvsdk version: " << xv::version() << std::endl;
+            }
+            xv::setLogLevel(xv::LogLevel(1));
+            auto devices = xv::getDevices(10., json, nullptr, xv::SlamStartMode::Normal);
+
+            // if no device: quit
+            if (devices.empty()) {
+                if(enable_output_log){
+                    std::cerr << "Timeout for device detection." << std::endl;
+                }
+                return EXIT_FAILURE;
+            }
+
+            // take the first device in the map
+            device = devices.begin()->second;
+            std::vector<unsigned char> result;
+
+            bool bOK = device->hidWriteAndRead({0x02, 0xfe, 0x36, 01}, result);
+            deviceStatusId = device->deviceStatus()->registerCallback(deviceStatusCallback);
+            break;
+        }
+        case 99:
+        {
+            const char menu_enableLog[] =
+            {
+                "1 : Enable                    \n"
+                "2 : Disable                    \n"
+                "enter select:"
+            };
+
+            int cmd_enable = requestCmdAllPlatform(menu_enableLog, sizeof(menu_enableLog));
+            if(cmd_enable == 1){
+                enable_output_log = true;
+            }else if(cmd_enable == 2){
+                enable_output_log = false;
+            }
+            break;
+        }
+        case 100:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+
+            if(device->gpsModule())
+            {
+                device->gpsModule()->start();
+                std::cout << "register gps callback" << std::endl;
+                gpsDataId = device->gpsModule()->registerCallback(gpsDataCallback);
+            }
+
+            break;
+        }
+        case 101:
+        {
+            if(device->gpsModule())
+            {
+                std::cout << "unregister gps callback" << std::endl;
+                device->gpsModule()->unregisterCallback(gpsDataId);
+                device->gpsModule()->stop();
+            }
+            break;
+        }
+        case 102:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+            
+            if(device->gpsDistanceModule())
+            {
+                device->gpsDistanceModule()->start();
+                std::cout << "register gps distance callback" << std::endl;
+                gpsDistanceDataId = device->gpsDistanceModule()->registerCallback(gpsDistanceDataCallback);
+            }
+
+            
+            break;
+        }
+        case 103:
+        {
+            if(device->gpsDistanceModule())
+            {
+                std::cout << "unregister gps callback" << std::endl;
+                device->gpsDistanceModule()->unregisterCallback(gpsDistanceDataId);
+                device->gpsDistanceModule()->stop();
+            }
+            break;
+        }
+        case 104:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+            
+            if(device->fisheyeCameras() && device->fisheyeCameras()->checkAntiDistortionSupport())
+            {
+                device->sgbmCamera()->start(global_config);
+                device->fisheyeCameras()->start();
+                feDewarpId = device->fisheyeCameras()->registerAntiDistortionCallback(feDewarpCallback);
+            }
+            
+            break;
+        }
+        case 105:
+        {
+            if(device->fisheyeCameras())
+            {
+                device->fisheyeCameras()->stop();
+                device->sgbmCamera()->stop();
+            }
+            break;
+        }
+        // case 106:
+        // {
+        //     if(device->orientationStream()){
+        //         device->orientationStream()->unregisterCallback( imuId );
+        //     }
+
+        //     std::cout << "start iris enroll" << std::endl;
+        //     device->iris()->start();
+
+        //     device->iris()->setUserName("Xvisio");
+        //     enrollDataId = device->iris()->registerEnrollCallback(enrollCallback);
+        //     break;
+        // }
+        // case 107:
+        // {
+        //     device->iris()->UnregisterEnrollCallback(enrollDataId);
+        //     device->iris()->stop();
+        //     break;
+        // }
+        // case 108:
+        // {
+        //     if(device->orientationStream()){
+        //         device->orientationStream()->unregisterCallback( imuId );
+        //     }
+
+        //     device->iris()->start();
+        //     std::cout << "start load iris info" << std::endl;
+        //     // std::cout << "irisData.size: " << irisData.size << std::endl;
+        //     // FILE* file = fopen("./feature.txt", "r");
+        //     // unsigned char* in = (unsigned char*)malloc(6532);
+        //     // int bytes_read = fread(in, sizeof(unsigned char), 6532, file);
+        //     // std::cout << "byte read " << bytes_read << std::endl;
+        //     // std::cout <<  "load iris info" << std::endl;
+        //     // bool bOK = device->iris()->loadIrisInfo(in, 1);
+        //     bool bOK = device->iris()->loadIrisInfo(&irisData.feature[0], 1);
+        //     std::cout << "start iris identify" << std::endl;
+        //     device->iris()->registerIdentifyCallback(irisCallback);
+
+        //     break;
+        // }
+        case 109:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+            
+            if(device->terrestrialMagnetismModule())
+            {
+                device->terrestrialMagnetismModule()->start();
+                std::cout << "register STM callback" << std::endl;
+                STMDataId = device->terrestrialMagnetismModule()->registerCallback(STMDataCallback);
+            }
+
+            break;
+        }
+        case 110:
+        {
+            if(device->terrestrialMagnetismModule())
+            {
+                device->terrestrialMagnetismModule()->unregisterCallback(STMDataId);
+                device->terrestrialMagnetismModule()->stop();
+            }
+            break;
+        }
+        case 111:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+            
+            auto c = std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(device->fisheyeCameras())->calibrationEx();
+            c.pop_back();
+            c.pop_back();
+            xv::AprilTagDetector detector(c);
+
+            device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const & stereo){
+                s_fe_mutex.lock();
+                s_images.edgeTimestampUs = stereo.edgeTimestampUs;
+                s_images.hostTimestamp = stereo.hostTimestamp;
+                s_images.id = stereo.id;
+                s_images.images.resize(0);
+                s_images.images.push_back(stereo.images[0]);
+                s_images.images.push_back(stereo.images[1]);
+                s_fe_mutex.unlock();
+            });
+
+            device->fisheyeCameras()->start();
+
+            device->slam()->start();
+            device->slam()->getPoseAt(s_pose, s_images.hostTimestamp);
+
+            Get4EyeTagDetection(detector);
+
+            break;
+        }
+        case 112:
+        {
+            // Stop get IMU
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+
+             device->colorCamera()->start();
+                rgbId = device->colorCamera()->registerCallback(rgbCallback);
+            // if (device->fisheyeCameras()) {
+            //     iFisheyeId = device->fisheyeCameras()->registerCallback([](xv::FisheyeImages const& images) {});
+            // }
+
+            // device->fisheyeCameras()->start();
+
+            device->slam()->start(xv::Slam::Mode::Mixed);
+            //std::dynamic_pointer_cast<xv::DeviceEx>(device)->slam2()->start(xv::Slam::Mode::Edge);
+            if(enable_output_log){
+                std::cout << "start  startTagDetector" << std::endl;
+            }
+            tagDetectorId = std::dynamic_pointer_cast<xv::ColorCameraEx>(device->colorCamera())->startTagDetector(device->slam(), "qr-code", 0.12, 50.);
+
+            if (!tagDetectorId.empty())
+            {
+                if(enable_output_log){
+                    std::cout << "start  GetTagDetection" << std::endl;
+                }
+                GetTagDetectionrgb(device->colorCamera(), tagDetectorId);
+            }
+            else {
+                if(enable_output_log){
+                    std::cout << "tagDetectorId is empty" << std::endl;
+                }
+            }
+            break;
+        }
+        case 113:
+        {
+            device->slam()->poseReset();
+            break;
+        }
+        case 114:
+        {
+            if(device->orientationStream()){
+                device->orientationStream()->unregisterCallback( imuId );
+            }
+
+            if(enable_output_log){
+                std::cout << "obj detector(RKNN3588) start " << std::endl;
+            }
+            device->objectDetectorRKNN3588()->setModel("objdet_config.json");
+            bool bOk = device->objectDetectorRKNN3588()->start();
+            if(enable_output_log){
+                std::cout << "obj detector(RKNN3588) register " << std::endl;
+            }
+            objDetRKNN3588Id = device->objectDetectorRKNN3588()->registerCallback(objDetRKNN3588Callback);
+            break;
+        }
+        case 115:
+        {
+            bool ok = device->objectDetectorRKNN3588()->unregisterCallback(objDetRKNN3588Id);
+            if (ok){
+                if(enable_output_log){
+                    std::cout << "unregister callback successfully" << std::endl;
+                }
+            }
+            ok = device->objectDetectorRKNN3588()->stop();
+            if (ok){
+                if(enable_output_log){
+                    std::cout << "obj detector(RKNN3588) stop successfully" << std::endl;
+                }
+            }
+
+            imuId = device->orientationStream()->registerCallback(orientationCallback);
+            std::cout << "register imu successfully" << std::endl;
             break;
         }
         default:
             printf("bad command\n");
-            break;
         }
     }
     stop = true;

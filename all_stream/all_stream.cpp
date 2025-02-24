@@ -45,7 +45,7 @@ static struct xv::sgbm_config global_config = {
 #include "xv-sdk-private.h"
 #endif
 
-#ifdef USE_OPENCV
+#ifdef USE_OPENCV_
 #include <opencv2/opencv.hpp>
 
 int s_x=-1,s_y=-1;
@@ -234,9 +234,11 @@ std::pair<cv::Mat,cv::Mat> raw_to_opencv(std::shared_ptr<const xv::EyetrackingIm
 
 
 std::shared_ptr<const xv::ColorImage> s_rgb = nullptr;
+std::shared_ptr<const xv::ColorImage> s_rgb2 = nullptr;
 std::shared_ptr<const xv::DepthImage> s_tof = nullptr;
 std::shared_ptr<const xv::GrayScaleImage> s_ir = nullptr;
 std::shared_ptr<const xv::FisheyeImages> s_stereo = nullptr;
+std::shared_ptr<const xv::FisheyeImages> s_stereoDewarp = nullptr;
 std::shared_ptr<const xv::DepthColorImage> s_depthColor = nullptr;
 std::shared_ptr<const xv::SgbmImage> s_ptr_sgbm = nullptr;
 std::shared_ptr<const xv::EyetrackingImage> s_eyetracking = nullptr;
@@ -252,12 +254,14 @@ std::vector<xv::TagDetection> s_rgb_tags;
 #endif
 
 std::mutex s_mtx_rgb;
+std::mutex s_mtx_rgb2;
 std::mutex s_mtx_tof;
 std::mutex s_mtx_depthColor;
 std::mutex s_mtx_ir;
 std::mutex s_mtx_stereo;
 std::mutex s_mtx_sgbm;
 std::mutex s_mtx_eyetracking;
+std::mutex s_mtx_stereoDewarp;
 
 void display() {
     if (enableDevMap["fisheye"]) {
@@ -265,10 +269,21 @@ void display() {
         cv::moveWindow("Left", 20, 20);
         cv::namedWindow("Right");
         cv::moveWindow("Right", 660, 20);
+        if(enableDevMap["Dewarp"])
+        {
+            cv::namedWindow("LeftDewrap");
+            cv::moveWindow("LeftDewrap", 20, 450);
+            cv::namedWindow("RightDewrap");
+            cv::moveWindow("RightDewrap", 660, 450);
+        }
     }
     if (enableDevMap["rgb"]) {
         cv::namedWindow("RGB");
         cv::moveWindow("RGB", 20, 462);
+    }
+    if (enableDevMap["rgb2"]) {
+        cv::namedWindow("RGB2");
+        cv::moveWindow("RGB2", 20, 962);
     }
     if (enableDevMap["tof"]) {
         cv::namedWindow("TOF");
@@ -288,9 +303,11 @@ void display() {
 
     while( !s_stop ){
         std::shared_ptr<const xv::ColorImage> rgb = nullptr;
+        std::shared_ptr<const xv::ColorImage> rgb2 = nullptr;
         std::shared_ptr<const xv::DepthImage> tof = nullptr;
         std::shared_ptr<const xv::GrayScaleImage> ir = nullptr;
         std::shared_ptr<const xv::FisheyeImages> stereo = nullptr;
+        std::shared_ptr<const xv::FisheyeImages> stereoDewarp = nullptr;
         std::shared_ptr<const xv::SgbmImage> ptr_sgbm = nullptr;
         std::shared_ptr<const xv::EyetrackingImage> eyetracking = nullptr;
 #ifdef USE_EX
@@ -313,6 +330,12 @@ void display() {
             s_mtx_rgb_tags.unlock();
 #endif
             s_mtx_stereo.unlock();
+            if(enableDevMap["Dewarp"])
+            {
+                s_mtx_stereoDewarp.lock();
+                stereoDewarp = s_stereoDewarp;
+                s_mtx_stereoDewarp.unlock();
+            }
 
 #ifdef USE_EX
             if (keypoints) {
@@ -333,6 +356,14 @@ void display() {
                 cv::imshow("Right", imgs.second);
             }
 #endif
+            if(enableDevMap["Dewarp"])
+            {
+                if (stereoDewarp) {
+                    auto imgs = raw_to_opencv(stereoDewarp);
+                    cv::imshow("LeftDewrap", imgs.first);
+                    cv::imshow("RightDewrap", imgs.second);
+                }
+            }
         }
         if (enableDevMap["rgb"]) {
 #ifdef USE_EX
@@ -353,6 +384,17 @@ void display() {
                 cv::imshow("RGB", img);
             }
         }
+
+        if (enableDevMap["rgb2"]) {
+            s_mtx_rgb2.lock();
+            rgb2 = s_rgb2;
+            s_mtx_rgb2.unlock();
+            if (rgb2 && rgb2->width>0 && rgb2->height>0) {
+                cv::Mat img = raw_to_opencv(rgb2);
+                cv::imshow("RGB2", img);
+            }
+        }
+
         if (enableDevMap["tof"]) {
             s_mtx_tof.lock();
             tof = s_tof;
@@ -481,11 +523,12 @@ int main( int argc, char* argv[] ) try
         }
     }
     enableDevMap["rgb"] = true;
+    enableDevMap["rgb2"] = true;
     enableDevMap["tof"]= true;
     enableDevMap["fisheye"] = true;
     enableDevMap["sgbm"] = true;
     enableDevMap["slam"] = true;
-    enableDevMap["slam_edge"] = true;
+    enableDevMap["slam_edge"] = false;
     enableDevMap["imu"] = true;
     enableDevMap["eyetracking"] = true;
     enableDevMap["sync"] = false;
@@ -496,6 +539,9 @@ int main( int argc, char* argv[] ) try
     enableDevMap["tof_point_cloud"] = false;
     enableDevMap["log"]=true;
     enableDevMap["ir"]=true;
+    enableDevMap["RGBD"]=true;
+    enableDevMap["Dewarp"] = true;
+    enableDevMap["stereo_planes"] = true;
     if (argc == 3)
     {
         std::string enableDevStr(argv[2]);
@@ -539,6 +585,11 @@ int main( int argc, char* argv[] ) try
     enableDevMap["slam"] &= device->slam() != nullptr;
     enableDevMap["imu"] &= device->imuSensor() != nullptr;
     enableDevMap["eyetracking"] &= device->eyetracking() != nullptr;
+    if(enableDevMap["fisheye"]){
+        enableDevMap["Dewarp"] &= device->fisheyeCameras()->checkAntiDistortionSupport();
+    }else {
+        enableDevMap["Dewarp"] = false;
+    }
 
     if(enableDevMap["dewarp"])
     {
@@ -572,6 +623,29 @@ int main( int argc, char* argv[] ) try
     {
         std::cout << "No RGB camera.\n";
     }
+
+    if (enableDevMap["rgb2"])
+    {
+        device->colorCamera()->registerCam2Callback( [](xv::ColorImage const & rgb){
+            static FpsCount fc;
+            fc.tic();
+            static int k = 0;
+            if(k++%25==0){
+                if(enableDevMap["log"])
+                {
+                    std::cout << "rgb 2     " << timeShowStr(rgb.edgeTimestampUs, rgb.hostTimestamp)
+                            << rgb.width << "x" << rgb.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                }
+            }
+        });
+        device->colorCamera()->setCamsResolution(xv::ColorCamera::Resolution::RGB_1920x1080);
+        device->colorCamera()->startCameras();
+    }
+    else
+    {
+        std::cout << "No RGB camera 2.\n";
+    }
+
 
     if (enableDevMap["tof"]) {
 
@@ -643,15 +717,13 @@ int main( int argc, char* argv[] ) try
         xv::TofCamera::Manufacturer manufacturer = device->tofCamera()->getManufacturer();
         if(enableDevMap["ir"] && manufacturer == xv::TofCamera::Manufacturer::Pmd)
         {
-            std::vector<unsigned char> result(63);
-            bool bOK = device->hidWriteAndRead({0x02,0x10,0xf5,0x02,0x01}, result);
+            bool bOK = device->tofCamera()->enableTofIr(true);
             if(bOK)
                 std::cout << "Enable IR successfully" << std::endl;
             else
                 std::cout << "Enable IR failed" << std::endl;
         } 
         device->tofCamera()->start();
-
         device->tofCamera()->registerColorDepthImageCallback([](const xv::DepthColorImage& depthColor){
             static FpsCount fc;
             fc.tic();
@@ -660,7 +732,7 @@ int main( int argc, char* argv[] ) try
                 if(enableDevMap["log"])
                 {
                     std::cout << "RGBD     " << timeShowStr(depthColor.hostTimestamp)
-                            << depthColor.width << "x" << depthColor.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                              << depthColor.width << "x" << depthColor.height << "@" << std::round(fc.fps()) << "fps" << std::endl;
                 }
             }
         });
@@ -756,6 +828,21 @@ int main( int argc, char* argv[] ) try
                 }
             }
         });
+        if(enableDevMap["Dewarp"])
+        {
+            device->fisheyeCameras()->registerAntiDistortionCallback([](xv::FisheyeImages const & stereo){
+                static FpsCount fc;
+                fc.tic();
+                static int k = 0;
+                if(k++%50==0){
+                    if(enableDevMap["log"])
+                    {
+                        std::cout << "stereo dewarp "  << timeShowStr(stereo.edgeTimestampUs, stereo.hostTimestamp) << stereo.images[0].width << "x" << stereo.images[0].height << "@" << std::round(fc.fps()) << "fps" << std::endl;
+                    }
+                }
+            });
+        }
+        
 #ifdef USE_EX
         tagDetectorId = std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(device->fisheyeCameras())->startTagDetector(device->slam(),  "36h11", 0.0639, 50.);
 
@@ -786,17 +873,20 @@ int main( int argc, char* argv[] ) try
                 }
             }
         });
-
-        device->slam()->registerStereoPlanesCallback([] (std::shared_ptr<const std::vector<xv::Plane>> planes) {
-            if (!planes) return;
-            static int k = 0;
-            if(k++%30==0){
-                if(enableDevMap["log"])
-                {
-                    std::cout << "Stereo-planes update (#" << planes->size() << " planes" << std::endl;
+        
+        if(enableDevMap["stereo_planes"])
+        {
+            device->slam()->registerStereoPlanesCallback([] (std::shared_ptr<const std::vector<xv::Plane>> planes) {
+                if (!planes) return;
+                static int k = 0;
+                if(k++%30==0){
+                    if(enableDevMap["log"])
+                    {
+                        std::cout << "Stereo-planes update (#" << planes->size() << " planes" << std::endl;
+                    }
                 }
-            }
-        });
+            });
+        }
 
         device->slam()->start();
     }
@@ -827,7 +917,7 @@ int main( int argc, char* argv[] ) try
 
     std::cout << " == Initialized ==" << std::endl;
 
-#ifdef USE_OPENCV
+#ifdef USE_OPENCV_
     //Display in thread to not slow down callbacks
 
     if (device->colorCamera()) {
@@ -843,10 +933,10 @@ int main( int argc, char* argv[] ) try
         img.width = rgb.width;
         img.height = rgb.height;
         img.data = data;
-        //xv::AprilTagDetector rgbDetector("36h11");
+        xv::AprilTagDetector rgbDetector("36h11");
         auto t0 = std::chrono::steady_clock::now();
         s_mtx_rgb_tags.lock();
-        //s_rgb_tags = rgbDetector.detect(img);
+        s_rgb_tags = rgbDetector.detect(img);
         s_rgb_gray = img;
         s_mtx_rgb_tags.unlock();
         auto t1 = std::chrono::steady_clock::now();
@@ -864,6 +954,15 @@ int main( int argc, char* argv[] ) try
         s_mtx_rgb.unlock();
         });
     }
+    if(enableDevMap["rgb2"]){
+        if (device->colorCamera()) {
+            device->colorCamera()->registerCam2Callback( [&device](xv::ColorImage const & im){
+            s_mtx_rgb2.lock();
+            s_rgb2 = std::make_shared<xv::ColorImage>(im);
+            s_mtx_rgb2.unlock();
+            });
+        }
+    }
     if (enableDevMap["fisheye"]) {
         device->fisheyeCameras()->registerCallback( [&device](xv::FisheyeImages const & stereo){
         s_mtx_stereo.lock();
@@ -876,6 +975,14 @@ int main( int argc, char* argv[] ) try
         s_mtx_tags.unlock();
 #endif
         });
+        if(enableDevMap["Dewarp"])
+        {
+            device->fisheyeCameras()->registerAntiDistortionCallback( [&device](xv::FisheyeImages const & stereo){
+            s_mtx_stereoDewarp.lock();
+            s_stereoDewarp = std::make_shared<xv::FisheyeImages>(stereo);
+            s_mtx_stereoDewarp.unlock();
+            });
+        }
 #ifdef USE_EX
         std::dynamic_pointer_cast<xv::FisheyeCamerasEx>(device->fisheyeCameras())->registerKeyPointsCallback([](const xv::FisheyeKeyPoints<2,32>& keypoints){
         s_mtx_stereo.lock();
@@ -920,7 +1027,6 @@ int main( int argc, char* argv[] ) try
             s_depthColor = std::make_shared<xv::DepthColorImage>(depthColor);
             s_mtx_depthColor.unlock();
         });
-
     }
     if(enableDevMap["sgbm"])
     {
@@ -1066,8 +1172,32 @@ int main( int argc, char* argv[] ) try
     if (device->slam())
         device->slam()->stop();
 
+    if(device->imuSensor()){
+        device->imuSensor()->stop();
+    }
 
-#ifdef USE_OPENCV
+    if(device->eventStream()){
+        device->eventStream()->stop();
+    }
+
+    if(device->sgbmCamera()){
+        device->sgbmCamera()->stop();
+    }
+
+    if(device->fisheyeCameras()){
+        device->fisheyeCameras()->stop();
+    }
+
+    if(device->colorCamera()){
+        device->colorCamera()->stop();
+    }
+
+    if(device->tofCamera()){
+        device->tofCamera()->stop();
+    }
+
+
+#ifdef USE_OPENCV_
     s_stop = true;
     if (t.joinable()) {
         t.join();

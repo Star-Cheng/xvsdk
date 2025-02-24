@@ -1,0 +1,1 @@
+/usr/bin/c++     CMakeFiles/read_calibration.dir/read_calibration.cpp.o  -o read_calibration  -lxvsdk -lxslam-usb-sdk -lxslam-hid-sdk -lxslam-uvc-sdk -lxslam-vsc-sdk -lxslam-edge-sdk -pthread 
