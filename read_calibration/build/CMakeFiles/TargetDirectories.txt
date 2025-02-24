@@ -1,3 +1,0 @@
-/home/gym/code/edge/xvsdk/read_calibration/build/CMakeFiles/rebuild_cache.dir
-/home/gym/code/edge/xvsdk/read_calibration/build/CMakeFiles/edit_cache.dir
-/home/gym/code/edge/xvsdk/read_calibration/build/CMakeFiles/read_calibration.dir

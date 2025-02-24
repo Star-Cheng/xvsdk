@@ -75,7 +75,8 @@
         "dense": "cpp",
         "*.ipp": "cpp",
         "ranges": "cpp",
-        "eigen": "cpp"
+        "eigen": "cpp",
+        "cfloat": "cpp"
     },
     "C_Cpp.errorSquiggles": "disabled",
     // "cmake.sourceDirectory": "C:/Users/13359/Documents/CppProject/Pcl/00base"
