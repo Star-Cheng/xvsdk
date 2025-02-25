@@ -1,82 +1,131 @@
+#include <opencv2/opencv.hpp>
+#include <xv-sdk.h>
 #include <iostream>
-#include <xv-sdk.h> // Stereo PRO SDK 头文件
-#include "fps_count.hpp"
-#include <opencv2/opencv.hpp> // OpenCV 头文件，用于图像处理和显示
+#include <mutex>
+#include <thread>
+#include <chrono>
+#include "colors.h"
 
-// 回调函数，用于处理 TOF 深度图像数据
+// 全局变量
+std::shared_ptr<const xv::DepthImage> s_tof = nullptr;
+std::mutex s_mtx_tof;
+bool s_stop = false;
+int s_frame_count = 0;
+double s_fps = 0.0;
+std::chrono::steady_clock::time_point s_last_time = std::chrono::steady_clock::now();
+
+// TOF相机回调函数
 void tofCallback(const xv::DepthImage& tof) {
-    static int frameCount = 0;
-    static FpsCount fc;
-    fc.tic();
+    if (tof.type == xv::DepthImage::Type::Depth_16 || tof.type == xv::DepthImage::Type::Depth_32) {
+        std::lock_guard<std::mutex> l(s_mtx_tof);
+        s_tof = std::make_shared<xv::DepthImage>(tof);
 
-    // 打印调试信息
-    std::cout << "TOF Frame: " << tof.width << "x" << tof.height << " @ " << std::round(fc.fps()) << "fps" << std::endl;
-
-    // 将深度图像数据转换为 OpenCV 的 Mat 格式
-    if (tof.type == xv::DepthImage::Type::Depth_16) {
-        cv::Mat depthImage(tof.height, tof.width, CV_16UC1, const_cast<uint16_t*>(reinterpret_cast<const uint16_t*>(tof.data.get())));
-        cv::Mat depthImage8U;
-        cv::normalize(depthImage, depthImage8U, 0, 255, cv::NORM_MINMAX, CV_8UC1);
-        cv::applyColorMap(depthImage8U, depthImage8U, cv::COLORMAP_JET);
-        cv::imshow("TOF Depth Camera", depthImage8U);
-    } else {
-        std::cerr << "Unsupported TOF image type!" << std::endl;
+        // 计算帧率
+        s_frame_count++;
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_last_time).count();
+        if (elapsed >= 1000) { // 每1秒计算一次帧率
+            s_fps = s_frame_count * 1000.0 / elapsed;
+            s_frame_count = 0;
+            s_last_time = now;
+        }
     }
-
-    cv::waitKey(1); // 等待 1ms，用于刷新图像显示
 }
 
-int main(int argc, char* argv[]) {
-    try {
-        // 初始化 Stereo PRO SDK
-        xv::setLogLevel(xv::LogLevel::info); // 设置日志级别
-        std::cout << "Stereo PRO SDK version: " << xv::version() << std::endl;
-
-        // 获取设备列表
-        auto devices = xv::getDevices(10.); // 超时时间 10 秒
-        if (devices.empty()) {
-            std::cerr << "No device found!" << std::endl;
-            return EXIT_FAILURE;
+// 将TOF深度图像转换为OpenCV格式
+cv::Mat raw_to_opencv(std::shared_ptr<const xv::DepthImage> tof) {
+    cv::Mat out;
+    if (tof->height > 0 && tof->width > 0) {
+        out = cv::Mat::zeros(tof->height, tof->width, CV_8UC3);
+        if (tof->type == xv::DepthImage::Type::Depth_32) {
+            float dmax = 7.5;
+            const auto tmp_d = reinterpret_cast<float const*>(tof->data.get());
+            for (unsigned int i = 0; i < tof->height * tof->width; i++) {
+                const auto& d = tmp_d[i];
+                if (d < 0.01 || d > 9.9) {
+                    out.at<cv::Vec3b>(i / tof->width, i % tof->width) = 0;
+                } else {
+                    unsigned int u = static_cast<unsigned int>(std::max(0.0f, std::min(255.0f, d * 255.0f / dmax)));
+                    const auto& cc = colors.at(u);
+                    out.at<cv::Vec3b>(i / tof->width, i % tof->width) = cv::Vec3b(cc.at(2), cc.at(1), cc.at(0));
+                }
+            }
+        } else if (tof->type == xv::DepthImage::Type::Depth_16) {
+            float dmax = 2494.0; // maybe 7494,2494,1498,1249 see mode_manage.h in sony toflib
+            const auto tmp_d = reinterpret_cast<int16_t const*>(tof->data.get());
+            for (unsigned int i = 0; i < tof->height * tof->width; i++) {
+                const auto& d = tmp_d[i];
+                unsigned int u = static_cast<unsigned int>(std::max(0.0f, std::min(255.0f, d * 255.0f / dmax)));
+                const auto& cc = colors.at(u);
+                out.at<cv::Vec3b>(i / tof->width, i % tof->width) = cv::Vec3b(cc.at(2), cc.at(1), cc.at(0));
+            }
         }
+    }
+    return out;
+}
 
-        auto device = devices.begin()->second;
-        std::cout << "Device found." << std::endl;
+// 显示TOF图像
+void display() {
+    cv::namedWindow("TOF");
+    cv::moveWindow("TOF", 500, 462);
 
-        if (!device->tofCamera()) {
-            std::cerr << "No TOF camera found on the device!" << std::endl;
-            return EXIT_FAILURE;
-        }
+    while (!s_stop) {
+        std::shared_ptr<const xv::DepthImage> tof = nullptr;
 
-        // 设置 TOF 相机的模式（可选）
-        device->tofCamera()->setLibWorkMode(xv::TofCamera::SonyTofLibMode::LABELIZE_DF);
+        s_mtx_tof.lock();
+        tof = s_tof;
+        s_mtx_tof.unlock();
 
-        // 注册 TOF 深度图像回调函数
-        device->tofCamera()->registerCallback(tofCallback);
-
-        // 启动 TOF 相机
-        device->tofCamera()->start();
-
-        std::cout << "TOF camera started. Press 'q' to quit." << std::endl;
-
-        // 创建窗口并指定位置
-        cv::namedWindow("TOF Depth Camera", cv::WINDOW_NORMAL);
-        cv::moveWindow("TOF Depth Camera", 100, 100);
-
-        // 主循环，等待用户退出
-        while (true) {
-            if (cv::waitKey(1) == 'q') { // 按下 'q' 键退出
-                break;
+        if (tof) {
+            cv::Mat img = raw_to_opencv(tof);
+            if (img.rows > 0 && img.cols > 0) {
+                // 打印分辨率和帧率
+                std::string resolution = "Resolution: " + std::to_string(tof->width) + "x" + std::to_string(tof->height);
+                std::string fps = "FPS: " + std::to_string(s_fps);
+                cv::putText(img, resolution, cv::Point(10, 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+                cv::putText(img, fps, cv::Point(10, 40), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
+                cv::imshow("TOF", img);
             }
         }
 
-        // 停止 TOF 相机
-        device->tofCamera()->stop();
-        std::cout << "TOF camera stopped." << std::endl;
+        cv::waitKey(1);
+    }
+}
 
-    } catch (const std::exception& e) {
-        std::cerr << "Exception occurred: " << e.what() << std::endl;
+int main(int argc, char* argv[]) try {
+    auto devices = xv::getDevices(10., "");
+    if (devices.empty()) {
+        std::cout << "Timeout: no device found\n";
         return EXIT_FAILURE;
     }
 
+    auto device = devices.begin()->second;
+
+    if (device->tofCamera()) {
+        device->tofCamera()->registerCallback(tofCallback);
+        device->tofCamera()->start();
+    } else {
+        std::cout << "No TOF camera.\n";
+        return EXIT_FAILURE;
+    }
+
+    s_stop = false;
+    std::thread t(display);
+
+    std::cout << "Press ENTER to stop" << std::endl;
+    std::cin.get();
+
+    s_stop = true;
+    if (t.joinable()) {
+        t.join();
+    }
+
+    if (device->tofCamera()) {
+        device->tofCamera()->stop();
+    }
+
     return EXIT_SUCCESS;
+} catch (const std::exception& e) {
+    std::cerr << e.what() << std::endl;
+    return EXIT_FAILURE;
 }

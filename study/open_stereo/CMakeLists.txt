@@ -19,14 +19,19 @@ include_directories(${xvsdk_INCLUDE_DIRS})
 set(open_stereo
     open_stereo.cpp
 )
+set(open_stereo_keypoint
+    open_stereo_keypoint.cpp
+)
 set(save_stereo
     save_stereo.cpp
 )
 
 # Create two executables
 add_executable(open_stereo ${open_stereo})
+add_executable(open_stereo_keypoint ${open_stereo_keypoint})
 add_executable(save_stereo ${save_stereo})
 
 # Link libraries with both applications
 target_link_libraries(open_stereo ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
+target_link_libraries(open_stereo_keypoint ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
 target_link_libraries(save_stereo ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)

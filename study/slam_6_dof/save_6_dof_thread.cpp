@@ -155,6 +155,7 @@ int main(int /*argc*/, char * /*argv*/[])
     std::cin.get();
 
     // 启动SLAM
+    // device->imuSensor()->start();
     device->slam()->start();
 
     std::cout << "Press enter to stop SLAM ..." << std::endl;

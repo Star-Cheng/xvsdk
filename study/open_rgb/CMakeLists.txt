@@ -19,7 +19,9 @@ include_directories(${xvsdk_INCLUDE_DIRS})
 set(open_rgb
     open_rgb.cpp
 )
-
+set(open_rgb_thread
+    open_rgb_thread.cpp
+)
 set(svae_rgb
     svae_rgb.cpp
 )
@@ -27,7 +29,9 @@ set(svae_rgb
 # Create two executables
 add_executable(open_rgb ${open_rgb})
 add_executable(svae_rgb ${svae_rgb})
+add_executable(open_rgb_thread ${open_rgb_thread})
 
 # Link libraries with both applications
 target_link_libraries(open_rgb ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
 target_link_libraries(svae_rgb ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
+target_link_libraries(open_rgb_thread ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)

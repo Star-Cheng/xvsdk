@@ -1,80 +1,148 @@
-#include <iostream>
-#include <opencv2/opencv.hpp>
+#define _USE_MATH_DEFINES // for C++
+
 #include <xv-sdk.h>
-#include "fps_count.hpp"
+#include <iostream>
+#include <thread>
+#include <atomic>
+#include <cmath>
+#include <fstream> // 用于文件操作
+#include "frequency_counter.hpp"
+#include <iomanip>
 
-// 回调函数，用于处理 SLAM 的 6DOF 姿态信息
-void slamCallback(const xv::Pose& pose) {
-    static FpsCount fc; // 假设 FpsCount 是一个用于计算帧率的工具类
-    fc.tic();
+std::ofstream outFile("slam_data.csv"); // 打开文件写入数据
 
-    // 提取姿态信息
-    auto translation = pose.translation();
-    auto rotation = pose.rotation();
-    auto pitchYawRoll = xv::rotationToPitchYawRoll(rotation);
+// 回调函数，用于处理SLAM的位姿数据
+void savePoseToCSV(const xv::Pose &pose)
+{
+    // 获取姿态的旋转数据
+    auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
 
-    // 打印姿态信息
-    std::cout << "SLAM Pose: "
-              << "Translation: (" << translation[0] << ", " << translation[1] << ", " << translation[2] << "), "
-              << "Rotation (Pitch, Yaw, Roll): (" << pitchYawRoll[0] * 180.0 / M_PI << ", "
-              << pitchYawRoll[1] * 180.0 / M_PI << ", " << pitchYawRoll[2] * 180.0 / M_PI << "), "
-              << "Confidence: " << pose.confidence() << ", "
-              << "FPS: " << std::round(fc.fps()) << std::endl;
+    // 打印获取的位姿数据
+    std::cout << "Saving pose to CSV: "
+              << "timestamp=" << pose.hostTimestamp() << ", "
+              << "x=" << pose.x() << ", "
+              << "y=" << pose.y() << ", "
+              << "z=" << pose.z() << ", "
+              << "pitch=" << pitchYawRoll[0] * 180.0 / M_PI << "°, "
+              << "yaw=" << pitchYawRoll[1] * 180.0 / M_PI << "°, "
+              << "roll=" << pitchYawRoll[2] * 180.0 / M_PI << "°, "
+              << "confidence=" << pose.confidence()
+              << std::endl;
 
-    // 可视化部分（简单示例）
-    cv::Mat img = cv::Mat::zeros(480, 640, CV_8UC3);
-    cv::putText(img, "SLAM Pose", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255, 255, 255), 2);
-    cv::putText(img, "Translation: (" + std::to_string(translation[0]) + ", " + std::to_string(translation[1]) + ", " + std::to_string(translation[2]) + ")",
-                cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-    cv::putText(img, "Rotation (Pitch, Yaw, Roll): (" + std::to_string(pitchYawRoll[0] * 180.0 / M_PI) + ", " + std::to_string(pitchYawRoll[1] * 180.0 / M_PI) + ", " + std::to_string(pitchYawRoll[2] * 180.0 / M_PI) + ")",
-                cv::Point(10, 90), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-    cv::putText(img, "Confidence: " + std::to_string(pose.confidence()), cv::Point(10, 120), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-    cv::putText(img, "FPS: " + std::to_string(std::round(fc.fps())), cv::Point(10, 150), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 255), 1);
-
-    cv::imshow("SLAM Visualization", img);
-    cv::waitKey(10);
+    // 将数据写入CSV文件
+    outFile << pose.hostTimestamp() << ","
+            << pose.x() << ","
+            << pose.y() << ","
+            << pose.z() << ","
+            << pitchYawRoll[0] * 180.0 / M_PI << "," // pitch
+            << pitchYawRoll[1] * 180.0 / M_PI << "," // yaw
+            << pitchYawRoll[2] * 180.0 / M_PI << "," // roll
+            << pose.confidence() << std::endl;       // confidence
 }
 
-int main(int argc, char* argv[]) {
-    try {
-        // 初始化设备
-        auto devices = xv::getDevices(10.);
-        if (devices.empty()) {
-            std::cerr << "No device found." << std::endl;
-            return -1;
-        }
+// 回调函数，用于处理SLAM的位姿数据
+void onPose(xv::Pose const &pose)
+{
+    // 保存姿态数据到CSV并打印调试信息
+    savePoseToCSV(pose);
 
-        auto device = devices.begin()->second;
+    // 获取姿态的旋转数据
+    auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
+    static FrequencyCounter fps;
+    fps.tic();
+    if (fps.count() % 500 == 1)
+    {
+        std::cout << "SLAM pose callback : " << fps.fps() << " Hz [timestamp=" << pose.hostTimestamp()
+                  << " x=" << pose.x() << " y=" << pose.y() << " z=" << pose.z()
+                  << " pitch=" << pitchYawRoll[0] * 180. / M_PI << "°"
+                  << " yaw=" << pitchYawRoll[1] * 180. / M_PI << "°"
+                  << " roll=" << pitchYawRoll[2] * 180. / M_PI << "°"
+                  << std::endl;
+    }
+}
 
-        // 检查 SLAM 功能是否可用
-        if (!device->slam()) {
-            std::cerr << "SLAM is not available on this device." << std::endl;
-            return -1;
-        }
+int main(int /*argc*/, char * /*argv*/[])
+{
+    // 打开CSV文件并写入标题
+    outFile << "timestamp,x,y,z,pitch,yaw,roll,confidence" << std::endl;
 
-        // 启动 SLAM 功能
-        device->slam()->start(xv::Slam::Mode::Mixed); // 使用混合模式
+    // 设置日志级别
+    xv::setLogLevel(xv::LogLevel::debug);
 
-        // 注册 SLAM 回调函数
-        device->slam()->registerCallback(slamCallback);
-
-        std::cout << "SLAM is running. Press 'q' to exit." << std::endl;
-
-        // 主循环，等待用户按下 'q' 键退出
-        while (true) {
-            if (cv::waitKey(1) == 'q') {
-                break;
-            }
-        }
-
-        // 停止 SLAM 功能
-        device->slam()->stop();
-
-        std::cout << "SLAM stopped." << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Exception occurred: " << e.what() << std::endl;
-        return -1;
+    // 获取设备列表
+    auto devices = xv::getDevices(5.);
+    if (devices.empty())
+    {
+        std::cerr << "Timeout for device detection." << std::endl;
+        return EXIT_FAILURE;
     }
 
-    return 0;
+    // 选择第一个设备
+    auto device = devices.begin()->second;
+
+    if (!device->slam())
+    {
+        std::cerr << "Host SLAM algorithm not supported." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // 启动3dof跟踪
+    device->orientationStream()->start();
+
+    // 显示设置
+    auto display = device->display();
+    if (display && display->calibration().size() == 2)
+    {
+        std::cout << "left eye display: " << display->calibration()[0].pdcm[0].w << "x" << display->calibration()[0].pdcm[0].h << std::endl;
+        std::cout << "right eye display: " << display->calibration()[1].pdcm[0].w << "x" << display->calibration()[1].pdcm[0].h << std::endl;
+    }
+
+    // 注册回调函数，获取SLAM的位姿
+    device->slam()->registerCallback(onPose);
+
+    // 模拟60Hz循环来获取SLAM位姿
+    std::atomic<bool> stop(false);
+    std::thread threadLoop60Hz([&stop, &device]
+                               {
+        while (!stop) {
+            auto now = std::chrono::steady_clock::now();
+            xv::Pose pose;
+            // 获取当前位姿（没有延迟，因为内部补偿了最后一次IMU数据接收到的预测）
+            if (device->slam()->getPose(pose)) {
+                auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
+                static FrequencyCounter fps;
+                fps.tic();
+                if (fps.count() % 120 == 1) {
+                    std::cout << "Current SLAM : " << fps.fps() << " Hz [timestamp=" << pose.hostTimestamp() << " x=" << pose.x() << " y=" << pose.y() << " z=" << pose.z()
+                              << " pitch="  << pitchYawRoll[0]*180./M_PI << "°" << " yaw="  << pitchYawRoll[1]*180./M_PI << "°" 
+                              << " roll="  << pitchYawRoll[2]*180./M_PI << "°" << std::endl;
+                }
+            }
+            std::this_thread::sleep_until(now + std::chrono::microseconds(long(1. / 600. * 1e6)));
+        } });
+
+    std::cout << "Press enter to start SLAM ..." << std::endl;
+    std::cin.get();
+
+    // 启动SLAM
+    device->slam()->start();
+
+    std::cout << "Press enter to stop SLAM ..." << std::endl;
+    std::cin.get();
+
+    // 停止SLAM
+    device->slam()->stop();
+
+    // 停止线程
+    stop = true;
+
+    if (threadLoop60Hz.joinable())
+    {
+        threadLoop60Hz.join();
+    }
+
+    // 关闭文件
+    outFile.close();
+
+    return EXIT_SUCCESS;
 }

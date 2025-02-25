@@ -1,178 +1,128 @@
-#define _USE_MATH_DEFINES // for C++
-
-#include <xv-sdk.h>
 #include <iostream>
-#include <thread>
-#include <atomic>
-#include <cmath>
-#include <fstream> // 用于文件操作
-#include <mutex> // 引入互斥锁
-#include <chrono>
-#include <sys/resource.h>  // 引入获取 CPU 使用情况的头文件
-#include "frequency_counter.hpp"
-#include <iomanip>
+#include <opencv2/opencv.hpp>
+#include <xv-sdk.h>
+#include "colors.h"  // 假设colors.h中定义了颜色映射表`colors`
 
-std::ofstream outFile("slam_data.csv"); // 打开文件写入数据
-std::mutex fileMutex; // 互斥锁，确保写入文件时的线程安全
-
-// 获取CPU使用情况（以百分比形式返回）
-double getCPUUsage() {
-    struct rusage usage;
-    if (getrusage(RUSAGE_SELF, &usage) == 0) {
-        // 获取进程的用户态时间和内核态时间（单位：秒）
-        double user_time = usage.ru_utime.tv_sec + usage.ru_utime.tv_usec / 1e6;
-        double sys_time = usage.ru_stime.tv_sec + usage.ru_stime.tv_usec / 1e6;
-
-        // 返回总的 CPU 使用时间，作为示例我们可以计算进程的总使用时间
-        // 在实际应用中，你可能需要根据时间间隔来计算进程的 CPU 使用率
-        double total_time = user_time + sys_time;
-        return total_time * 100; // 以百分比形式返回
-    }
-    return 0.0; // 如果获取失败，返回0
-}
-
-// 回调函数，用于处理SLAM的位姿数据
-void savePoseToCSV(const xv::Pose &pose)
+// 定义ToF深度图像转换为OpenCV格式的函数
+cv::Mat raw_to_opencv(std::shared_ptr<const xv::DepthImage> tof)
 {
-    // 获取姿态的旋转数据
-    auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
-
-    // 获取当前CPU使用情况
-    double cpuUsage = getCPUUsage();
-
-    // 打印获取的位姿数据
-    std::cout << "Saving pose to CSV: "
-              << "timestamp=" << pose.hostTimestamp() << ", "
-              << "x=" << pose.x() << ", "
-              << "y=" << pose.y() << ", "
-              << "z=" << pose.z() << ", "
-              << "pitch=" << pitchYawRoll[0] * 180.0 / M_PI << "°, "
-              << "yaw=" << pitchYawRoll[1] * 180.0 / M_PI << "°, "
-              << "roll=" << pitchYawRoll[2] * 180.0 / M_PI << "°, "
-              << "confidence=" << pose.confidence()
-              << ", CPU Usage=" << cpuUsage << "%" << std::endl;
-
-    // 加锁，确保写入文件时线程安全
-    std::lock_guard<std::mutex> lock(fileMutex);
-    
-    // 将数据写入CSV文件
-    outFile << pose.hostTimestamp() << ","
-            << pose.x() << ","
-            << pose.y() << ","
-            << pose.z() << ","
-            << pitchYawRoll[0] * 180.0 / M_PI << "," // pitch
-            << pitchYawRoll[1] * 180.0 / M_PI << "," // yaw
-            << pitchYawRoll[2] * 180.0 / M_PI << "," // roll
-            << pose.confidence() << ","
-            << cpuUsage << std::endl;       // 写入 CPU 使用率
-}
-
-// 回调函数，用于处理SLAM的位姿数据
-void onPose(xv::Pose const &pose)
-{
-    // 保存姿态数据到CSV并打印调试信息
-    savePoseToCSV(pose);
-
-    // 获取姿态的旋转数据
-    auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
-    static FrequencyCounter fps;
-    fps.tic();
-    if (fps.count() % 500 == 1)
-    {
-        std::cout << "SLAM pose callback : " << fps.fps() << " Hz [timestamp=" << pose.hostTimestamp()
-                  << " x=" << pose.x() << " y=" << pose.y() << " z=" << pose.z()
-                  << " pitch=" << pitchYawRoll[0] * 180. / M_PI << "°"
-                  << " yaw=" << pitchYawRoll[1] * 180. / M_PI << "°"
-                  << " roll=" << pitchYawRoll[2] * 180. / M_PI << "°"
-                  << std::endl;
-    }
-}
-
-int main(int /*argc*/, char * /*argv*/[])
-{
-    // 打开CSV文件并写入标题
-    outFile << "timestamp,x,y,z,pitch,yaw,roll,confidence,cpu_usage" << std::endl;
-
-    // 设置日志级别
-    xv::setLogLevel(xv::LogLevel::debug);
-
-    // 获取设备列表
-    auto devices = xv::getDevices(5.);
-    if (devices.empty())
-    {
-        std::cerr << "Timeout for device detection." << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    // 选择第一个设备
-    auto device = devices.begin()->second;
-
-    if (!device->slam())
-    {
-        std::cerr << "Host SLAM algorithm not supported." << std::endl;
-        return EXIT_FAILURE;
-    }
-
-    // 注册方向（3dof）跟踪
-    // device->orientationStream()->registerCallback(on3dof);
-
-    // 启动3dof跟踪
-    device->orientationStream()->start();
-
-    // 显示设置
-    auto display = device->display();
-    if (display && display->calibration().size() == 2)
-    {
-        std::cout << "left eye display: " << display->calibration()[0].pdcm[0].w << "x" << display->calibration()[0].pdcm[0].h << std::endl;
-        std::cout << "right eye display: " << display->calibration()[1].pdcm[0].w << "x" << display->calibration()[1].pdcm[0].h << std::endl;
-    }
-
-    // 注册回调函数，获取SLAM的位姿
-    device->slam()->registerCallback(onPose);
-
-    // 模拟60Hz循环来获取SLAM位姿
-    std::atomic<bool> stop(false);
-    std::thread threadLoop60Hz([&stop, &device]
-                               {
-        while (!stop) {
-            auto now = std::chrono::steady_clock::now();
-            xv::Pose pose;
-            // 获取当前位姿（没有延迟，因为内部补偿了最后一次IMU数据接收到的预测）
-            if (device->slam()->getPose(pose)) {
-                auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
-                static FrequencyCounter fps;
-                fps.tic();
-                if (fps.count() % 120 == 1) {
-                    std::cout << "Current SLAM : " << fps.fps() << " Hz [timestamp=" << pose.hostTimestamp() << " x=" << pose.x() << " y=" << pose.y() << " z=" << pose.z()
-                              << " pitch="  << pitchYawRoll[0]*180./M_PI << "°" << " yaw="  << pitchYawRoll[1]*180./M_PI << "°" 
-                              << " roll="  << pitchYawRoll[2]*180./M_PI << "°" << std::endl;
+    cv::Mat out;
+    if (tof->height > 0 && tof->width > 0) {
+        out = cv::Mat::zeros(tof->height, tof->width, CV_8UC3);
+        if (tof->type == xv::DepthImage::Type::Depth_32) {
+            float dmax = 7.5;  // 最大深度范围（单位：米）
+            const auto tmp_d = reinterpret_cast<float const*>(tof->data.get());
+            for (unsigned int i = 0; i < tof->height * tof->width; i++) {
+                const auto &d = tmp_d[i];
+                if (d < 0.01 || d > 9.9) {
+                    out.at<cv::Vec3b>(i / tof->width, i % tof->width) = 0;  // 无效深度值
+                } else {
+                    unsigned int u = static_cast<unsigned int>(std::max(0.0f, std::min(255.0f, d * 255.0f / dmax)));
+                    const auto &cc = colors.at(u);  // 使用颜色映射表
+                    out.at<cv::Vec3b>(i / tof->width, i % tof->width) = cv::Vec3b(cc.at(2), cc.at(1), cc.at(0));
                 }
             }
-            std::this_thread::sleep_until(now + std::chrono::microseconds(long(1. / 60. * 1e6)));
-        } });
+        } else if (tof->type == xv::DepthImage::Type::Depth_16) {
+            float dmax = 2494.0;  // 最大深度范围（单位：毫米）
+            const auto tmp_d = reinterpret_cast<int16_t const*>(tof->data.get());
+            for (unsigned int i = 0; i < tof->height * tof->width; i++) {
+                const auto &d = tmp_d[i];
+                unsigned int u = static_cast<unsigned int>(std::max(0.0f, std::min(255.0f, d * 255.0f / dmax)));
+                const auto &cc = colors.at(u);  // 使用颜色映射表
+                out.at<cv::Vec3b>(i / tof->width, i % tof->width) = cv::Vec3b(cc.at(2), cc.at(1), cc.at(0));
+            }
+        }
+    }
+    return out;
+}
 
-    std::cout << "Press enter to start SLAM ..." << std::endl;
-    std::cin.get();
+int main(int argc, char* argv[])
+{
+    try {
+        // 设置日志级别
+        xv::setLogLevel(xv::LogLevel::debug);
 
-    // 启动SLAM
-    device->slam()->start();
+        // 获取设备
+        auto devices = xv::getDevices(3.);  // 超时时间为10秒
+        if (devices.empty()) {
+            std::cerr << "No device found!" << std::endl;
+            return -1;
+        }
 
-    std::cout << "Press enter to stop SLAM ..." << std::endl;
-    std::cin.get();
+        auto device = devices.begin()->second;
 
-    // 停止SLAM
-    device->slam()->stop();
+        // 检查ToF相机是否存在
+        if (!device->tofCamera()) {
+            std::cerr << "No ToF camera found on the device!" << std::endl;
+            return -1;
+        }
 
-    // 停止线程
-    stop = true;
+        // 创建全局变量用于存储ToF图像
+        std::shared_ptr<const xv::DepthImage> s_tof = nullptr;
+        std::mutex s_mtx_tof;
+        
+        // 用于计算帧率的变量
+        std::chrono::steady_clock::time_point lastFrameTime = std::chrono::steady_clock::now();
+        int frameCount = 0;
+        double fps = 0.0;
+        // 注册ToF图像回调函数
+        device->tofCamera()->registerCallback([&](const xv::DepthImage& tof) {
+            std::lock_guard<std::mutex> lock(s_mtx_tof);
+            s_tof = std::make_shared<xv::DepthImage>(tof);
+                        // 打印分辨率（仅在第一次打印）
+            static bool resolutionPrinted = false;
+            if (!resolutionPrinted) {
+                std::cout << "Resolution: " << tof.width << "x" << tof.height << std::endl;
+                resolutionPrinted = true;
+            }
 
-    if (threadLoop60Hz.joinable())
-    {
-        threadLoop60Hz.join();
+            // 计算帧率
+            auto currentTime = std::chrono::steady_clock::now();
+            ++frameCount;
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(currentTime - lastFrameTime).count();
+            if (duration >= 1) {
+                fps = static_cast<double>(frameCount) / duration;
+                std::cout << "FPS: " << fps << std::endl;
+                frameCount = 0;
+                lastFrameTime = currentTime;
+            }
+        });
+
+        // 启动ToF相机
+        device->tofCamera()->start();
+
+        // 创建OpenCV窗口
+        cv::namedWindow("ToF Depth Camera", cv::WINDOW_AUTOSIZE);
+
+        std::cout << "Press 'q' to exit." << std::endl;
+
+        // 主循环：显示ToF深度图像
+        while (true) {
+            std::shared_ptr<const xv::DepthImage> tof;
+            {
+                std::lock_guard<std::mutex> lock(s_mtx_tof);
+                tof = s_tof;
+            }
+
+            if (tof) {
+                cv::Mat img = raw_to_opencv(tof);
+                cv::imshow("ToF Depth Camera", img);
+            }
+
+            if (cv::waitKey(1) == 'q') {
+                break;
+            }
+        }
+
+        // 停止ToF相机
+        device->tofCamera()->stop();
+
+        cv::destroyAllWindows();
+    }
+    catch (const std::exception& e) {
+        std::cerr << "Exception: " << e.what() << std::endl;
+        return -1;
     }
 
-    // 关闭文件
-    outFile.close();
-
-    return EXIT_SUCCESS;
+    return 0;
 }

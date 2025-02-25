@@ -19,14 +19,19 @@ include_directories(${xvsdk_INCLUDE_DIRS})
 set(open_tof
     open_tof.cpp
 )
+set(open_tof_ir
+    open_tof_ir.cpp
+)
 set(save_tof_ply
     save_tof_ply.cpp
 )
 
 # Create two executables
 add_executable(open_tof ${open_tof})
+add_executable(open_tof_ir ${open_tof_ir})
 add_executable(save_tof_ply ${save_tof_ply})
 
 # Link libraries with both applications
 target_link_libraries(open_tof ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
+target_link_libraries(open_tof_ir ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)
 target_link_libraries(save_tof_ply ${OpenCV_LIBS} ${xvsdk_LIBRARIES} pthread)

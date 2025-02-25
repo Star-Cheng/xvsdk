@@ -1,111 +1,161 @@
 #include <iostream>
-#include <xv-sdk.h> // Stereo PRO SDK 头文件
-#include "fps_count.hpp"
-#include <opencv2/opencv.hpp> // OpenCV 头文件，用于图像处理和显示
-#include <cstdlib>
+#include <opencv2/opencv.hpp>
+#include <xv-sdk.h>
+#include "colors.h" // 假设colors.h中定义了颜色映射表`colors`
+#include <chrono>
 #include <thread>
-#include <fstream>
-#include <sstream>
-#include <cmath>
 #include <mutex>
-#include <signal.h>
-#include <cstring>
+#include <condition_variable>
 
-// 回调函数，用于处理 RGB 图像数据
-void rgbCallback(const xv::ColorImage &rgb)
-// void rgbCallback(const xv::ColorImage &im)
-
+// 定义RGB图像转换为OpenCV格式的函数
+cv::Mat raw_to_opencv(std::shared_ptr<const xv::ColorImage> rgb)
 {
-    //////////////////////////////////////////////////////////////////
-    // auto rgb = im.toRgb();
-    // std::shared_ptr<std::uint8_t> data(new std::uint8_t[rgb.width*rgb.height], std::default_delete<std::uint8_t[]>());
-    // for (std::size_t i=0; i < rgb.width*rgb.height; ++i) {
-    //     data.get()[i] = 0.299*rgb.data.get()[3*i]+0.587*rgb.data.get()[3*i+1]+0.114*rgb.data.get()[3*i+2];
-    // }
-    // xv::GrayScaleImage img;
-    // img.width = rgb.width;
-    // img.height = rgb.height;
-    // img.data = data;
-    // // s_rgb_tags = rgbDetector.detect(img);
-    // // s_rgb_gray = img;
-    // // 将 RGB 图像数据转换为 OpenCV 的 Mat 格式
-    // // cv::Mat img = raw_to_opencv(rgb);
-    // cv::Mat image(rgb.height, rgb.width, CV_8UC1, const_cast<uint8_t *>(rgb.data.get()));
-    // cv::imshow("RGB Camera", img);
-    // cv::waitKey(1); // 等待 1ms，用于刷新图像显示
-    //////////////////////////////////////////////////////////////////
-    static int frameCount = 0;
-    static FpsCount fc;
-    fc.tic();
-    // 打印调试信息
-    std::cout << "RGB Frame: " << rgb.width << "x" << rgb.height << " @ " << std::round(fc.fps()) << "fps" << std::endl;
-
-    // 将 RGB 图像数据转换为 OpenCV 的 Mat 格式
-    cv::Mat image(rgb.height, rgb.width, CV_8UC1, const_cast<uint8_t *>(rgb.data.get()));
-    cv::imshow("RGB Camera", image);
-    cv::waitKey(1); // 等待 1ms，用于刷新图像显示
-    //////////////////////////////////////////////////////////////////
+    cv::Mat img;
+    switch (rgb->codec)
+    {
+        case xv::ColorImage::Codec::YUV420p:
+        {
+            img = cv::Mat::zeros(rgb->height, rgb->width, CV_8UC3);
+            auto raw = rgb->data.get();
+            auto rawImg = cv::Mat(rgb->height * 3 / 2, rgb->width, CV_8UC1, const_cast<unsigned char *>(raw));
+            cv::cvtColor(rawImg, img, cv::COLOR_YUV2BGR_I420);
+            break;
+        }
+        case xv::ColorImage::Codec::YUYV:
+        {
+            img = cv::Mat::zeros(rgb->height, rgb->width, CV_8UC3);
+            auto raw = rgb->data.get();
+            auto rawImg = cv::Mat(rgb->height, rgb->width, CV_8UC2, const_cast<unsigned char *>(raw));
+            cv::cvtColor(rawImg, img, cv::COLOR_YUV2BGR_YUYV);
+            break;
+        }
+        case xv::ColorImage::Codec::JPEG:
+        {
+            cv::Mat raw(1, rgb->width * rgb->height, CV_8UC1, const_cast<unsigned char *>(rgb->data.get()));
+            img = cv::imdecode(raw, cv::IMREAD_COLOR);
+            break;
+        }
+        default:
+            std::cerr << "Unsupported codec for RGB image" << std::endl;
+            return cv::Mat();
+    }
+    return img;
 }
+
+// 全局变量
+std::shared_ptr<const xv::ColorImage> s_rgb = nullptr;
+std::mutex s_mtx_rgb;
+std::condition_variable cvFrameUpdated;
+bool running = true;
+
+// 用于计算帧率的变量
+std::chrono::steady_clock::time_point lastFrameTime;
+int frameCount = 0;
+double fps = 0.0;
+
+// 显示线程
+void displayLoop()
+{
+    cv::namedWindow("RGB Camera", cv::WINDOW_AUTOSIZE);
+    cv::Mat displayFrame;
+
+    while (running)
+    {
+        {
+            std::unique_lock<std::mutex> lock(s_mtx_rgb);
+            cvFrameUpdated.wait(lock, [] { return s_rgb != nullptr; });
+            displayFrame = raw_to_opencv(s_rgb);
+        }
+
+        if (!displayFrame.empty())
+        {
+            cv::imshow("RGB Camera", displayFrame);
+        }
+
+        // 控制帧率
+        if (cv::waitKey(60) == 'q')
+        {
+            running = false;
+            break;
+        }
+    }
+
+    cv::destroyAllWindows();
+}
+
 int main(int argc, char *argv[])
 {
     try
     {
-        // 初始化 Stereo PRO SDK
-        xv::setLogLevel(xv::LogLevel::info); // 设置日志级别
-        std::cout << "Stereo PRO SDK version: " << xv::version() << std::endl;
+        // 设置日志级别
+        xv::setLogLevel(xv::LogLevel::debug);
 
-        // 获取设备列表
-        auto devices = xv::getDevices(10.); // 超时时间 10 秒
+        // 获取设备
+        auto devices = xv::getDevices(10.); // 超时时间为10秒
         if (devices.empty())
         {
             std::cerr << "No device found!" << std::endl;
-            return EXIT_FAILURE;
+            return -1;
         }
 
         auto device = devices.begin()->second;
-        std::cout << "Device found." << std::endl;
 
+        // 检查RGB相机是否存在
         if (!device->colorCamera())
         {
             std::cerr << "No RGB camera found on the device!" << std::endl;
-            return EXIT_FAILURE;
+            return -1;
         }
 
-        // 注册 RGB 图像回调函数
-        device->colorCamera()->registerCallback(rgbCallback);
+        // 注册RGB图像回调函数
+        device->colorCamera()->registerCallback([&](const xv::ColorImage &rgb)
+        {
+            std::lock_guard<std::mutex> lock(s_mtx_rgb);
+            s_rgb = std::make_shared<xv::ColorImage>(rgb);
+            cvFrameUpdated.notify_one();  // 通知显示线程更新图像
 
-        // 设置 RGB 相机的分辨率（可选）
-        // device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1920x1080);
-        device->colorCamera()->setResolution(xv::ColorCamera::Resolution::RGB_1280x720);
+            // 计算帧率
+            auto currentTime = std::chrono::steady_clock::now();
+            if (frameCount == 0)
+            {
+                lastFrameTime = currentTime;
+            }
+            frameCount++;
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastFrameTime).count();
+            if (duration >= 1000) // 从毫秒到秒的转换
+            {
+                fps = frameCount / (duration / 1000.0);
+                std::cout << "FPS: " << fps << ", Resolution: " << rgb.width << "x" << rgb.height << std::endl;
+                frameCount = 0;
+                lastFrameTime = currentTime;
+            }
+        });
 
-        // 启动 RGB 相机
+        // 启动RGB相机
         device->colorCamera()->start();
 
-        std::cout << "RGB camera started. Press 'q' to quit." << std::endl;
+        // 启动显示线程
+        std::thread displayThread(displayLoop);
 
-        // 创建窗口并指定位置
-        // cv::namedWindow("RGB Camera", cv::WINDOW_NORMAL);
-        cv::namedWindow("RGB Camera");
-        cv::moveWindow("RGB Camera", 20, 462);
+        std::cout << "Press 'q' to exit." << std::endl;
 
-        // 主循环，等待用户退出
-        while (true)
+        // 主循环
+        while (running)
         {
-            if (cv::waitKey(1) == 'q')
-            { // 按下 'q' 键退出
-                break;
-            }
+            // 这里可以添加其他逻辑
+            std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 控制主循环频率
         }
 
-        // 停止 RGB 相机
+        // 停止RGB相机
         device->colorCamera()->stop();
-        std::cout << "RGB camera stopped." << std::endl;
+        running = false;
+        displayThread.join(); // 等待显示线程结束
     }
     catch (const std::exception &e)
     {
-        std::cerr << "Exception occurred: " << e.what() << std::endl;
-        return EXIT_FAILURE;
+        std::cerr << "Exception: " << e.what() << std::endl;
+        return -1;
     }
 
-    return EXIT_SUCCESS;
+    return 0;
 }
