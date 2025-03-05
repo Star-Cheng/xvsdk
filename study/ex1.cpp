@@ -1,110 +1,135 @@
-#include <iostream>
+#include <opencv2/opencv.hpp>
+#include <opencv2/features2d.hpp>
 #include <xv-sdk.h>
-#include <chrono>
-#include <thread>
+#include <iostream>
 #include <mutex>
-#include <atomic>
-#include <fstream>
-
-#define M_PI 3.14159265358979323846
+#include <thread>
+#include <chrono>
 
 // 全局变量
-std::shared_ptr<xv::Device> device = nullptr;
-std::atomic<bool> stop(false);
-std::mutex file_mutex; // 用于保护文件写入
-std::ofstream csv_file; // CSV 文件流
+std::shared_ptr<const xv::FisheyeImages> s_stereo = nullptr;
+std::mutex s_mtx_stereo;
+bool s_stop = false;
 
-// SLAM数据回调函数
-void slamCallback(const xv::Pose &pose) {
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
+// 特征点检测函数
+std::vector<cv::KeyPoint> detectFeatures(const cv::Mat &img)
+{
+    cv::Ptr<cv::FeatureDetector> detector = cv::ORB::create();
+    std::vector<cv::KeyPoint> keypoints;
+    detector->detect(img, keypoints);
+    return keypoints;
+}
 
-    // 获取时间戳
-    double timestamp = pose.hostTimestamp();
+// 显示图像和特征点
+void display()
+{
+    cv::namedWindow("Left", cv::WINDOW_AUTOSIZE);
+    cv::namedWindow("Right", cv::WINDOW_AUTOSIZE);
 
-    // 获取位置
-    double x = pose.x();
-    double y = pose.y();
-    double z = pose.z();
-
-    // 获取姿态（pitch, yaw, roll）
-    auto pitchYawRoll = xv::rotationToPitchYawRoll(pose.rotation());
-    double pitch = pitchYawRoll[0] * 180.0 / M_PI; // 转换为度
-    double yaw = pitchYawRoll[1] * 180.0 / M_PI;   // 转换为度
-    double roll = pitchYawRoll[2] * 180.0 / M_PI;  // 转换为度
-
-    // 获取置信度
-    double confidence = pose.confidence();
-
-    // 打印数据
-    std::cout << "Timestamp: " << timestamp << "s"
-              << ", Position: (" << x << ", " << y << ", " << z << ")"
-              << ", Orientation: (pitch=" << pitch << "°, yaw=" << yaw << "°, roll=" << roll << "°)"
-              << ", Confidence: " << confidence
-              << std::endl;
-
-    // 将数据写入 CSV 文件
+    while (!s_stop)
     {
-        std::lock_guard<std::mutex> file_lock(file_mutex);
-        if (csv_file.is_open()) {
-            csv_file << timestamp << ","
-                     << x << "," << y << "," << z << ","
-                     << pitch << "," << yaw << "," << roll << ","
-                     << confidence << "\n";
+        std::shared_ptr<const xv::FisheyeImages> stereo;
+        {
+            std::lock_guard<std::mutex> l(s_mtx_stereo);
+            stereo = s_stereo;
+        }
+
+        if (stereo)
+        {
+            // 将鱼眼图像转换为 OpenCV Mat 格式
+            cv::Mat left = cv::Mat::zeros(stereo->images[0].height, stereo->images[0].width, CV_8UC1);
+            cv::Mat right = cv::Mat::zeros(stereo->images[1].height, stereo->images[1].width, CV_8UC1);
+
+            if (stereo->images[0].data != nullptr)
+            {
+                std::memcpy(left.data, stereo->images[0].data.get(), static_cast<size_t>(left.rows * left.cols));
+            }
+            if (stereo->images[1].data != nullptr)
+            {
+                std::memcpy(right.data, stereo->images[1].data.get(), static_cast<size_t>(right.rows * right.cols));
+            }
+
+            // 转换为 BGR 彩色图像
+            cv::cvtColor(left, left, cv::COLOR_GRAY2BGR);
+            cv::cvtColor(right, right, cv::COLOR_GRAY2BGR);
+
+            // 检测左图和右图的特征点
+            auto leftKeypoints = detectFeatures(left);
+            auto rightKeypoints = detectFeatures(right);
+
+            // 调整特征点大小
+            for (auto &kp : leftKeypoints)
+            {
+                kp.size = 2.0;
+            }
+            for (auto &kp : rightKeypoints)
+            {
+                kp.size = 2.0;
+            }
+
+            // 绘制特征点
+            cv::drawKeypoints(left, leftKeypoints, left, cv::Scalar(0, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+            cv::drawKeypoints(right, rightKeypoints, right, cv::Scalar(0, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+
+            // 显示图像
+            cv::imshow("Left", left);
+            cv::imshow("Right", right);
+        }
+
+        // 按下 ESC 键时退出
+        if (cv::waitKey(1) == 27)
+        { 
+            s_stop = true;
         }
     }
 }
 
 int main(int argc, char *argv[])
-try {
+try
+{
     std::cout << "xvsdk version: " << xv::version() << std::endl;
 
-    // 获取设备
+    xv::setLogLevel(xv::LogLevel::debug);
+
     auto devices = xv::getDevices(10., "");
-    if (devices.empty()) {
-        std::cerr << "Timeout: no device found\n";
+    if (devices.empty())
+    {
+        std::cout << "Timeout: no device found\n";
         return EXIT_FAILURE;
     }
 
-    device = devices.begin()->second;
+    auto device = devices.begin()->second;
 
-    // 检查SLAM模块是否存在
-    if (!device->slam()) {
-        std::cerr << "No SLAM module found.\n";
+    if (!device->fisheyeCameras())
+    {
+        std::cout << "No stereo camera found.\n";
         return EXIT_FAILURE;
     }
 
-    // 打开 CSV 文件
-    csv_file.open("slam_data.csv");
-    if (!csv_file.is_open()) {
-        std::cerr << "Failed to open CSV file.\n";
-        return EXIT_FAILURE;
-    }
+    // 注册回调函数，获取双目图像
+    device->fisheyeCameras()->registerCallback([](const xv::FisheyeImages &stereo)
+                                               {
+        std::lock_guard<std::mutex> l(s_mtx_stereo);
+        s_stereo = std::make_shared<xv::FisheyeImages>(stereo); });
 
-    // 写入 CSV 文件头
-    csv_file << "Timestamp,X,Y,Z,Pitch,Yaw,Roll,Confidence\n";
+    // 启动摄像头
+    device->fisheyeCameras()->start();
 
-    // 启动SLAM模块
-    device->slam()->start();
+    // 启动显示图像的线程
+    std::thread t(display);
 
-    // 注册SLAM回调函数
-    int slamCallbackId = device->slam()->registerCallback(slamCallback);
+    std::cout << "Press ESC to stop" << std::endl;
 
-    std::cout << "SLAM started. Press ENTER to stop.\n";
-    std::cin.get(); // 等待用户按下回车键
+    // 等待线程完成
+    t.join();
 
-    // 停止SLAM模块
-    device->slam()->unregisterCallback(slamCallbackId);
-    device->slam()->stop();
-    std::cout << "SLAM stopped.\n";
-
-    // 关闭 CSV 文件
-    csv_file.close();
-    std::cout << "SLAM data saved to slam_data.csv.\n";
+    // 停止摄像头
+    device->fisheyeCameras()->stop();
 
     return EXIT_SUCCESS;
 }
-catch (const std::exception &e) {
-    std::cerr << "Exception: " << e.what() << std::endl;
+catch (const std::exception &e)
+{
+    std::cerr << e.what() << std::endl;
     return EXIT_FAILURE;
 }

@@ -102,6 +102,10 @@ int main(int argc, char* argv[]) try {
     auto device = devices.begin()->second;
 
     if (device->tofCamera()) {
+        // device->tofCamera()->setDistanceMode(xv::TofCamera::DistanceMode::Short);
+        // device->tofCamera()->setDistanceMode(xv::TofCamera::DistanceMode::Middle);
+        device->tofCamera()->setDistanceMode(xv::TofCamera::DistanceMode::Long);
+        device->tofCamera()->setLibWorkMode(static_cast<xv::TofCamera::SonyTofLibMode>(2));
         device->tofCamera()->registerCallback(tofCallback);
         device->tofCamera()->start();
     } else {
