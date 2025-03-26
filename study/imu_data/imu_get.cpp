@@ -129,7 +129,7 @@ int main() {
     // 定义IMU数据回调函数
     auto imuCallback = [](const xv::Imu& imu) {
         static int count = 0;
-        if (count++ % 100 == 0) {  // 每100条数据打印一次
+        if (count++ % 10 == 0) {  // 每100条数据打印一次
             std::cout << "IMU Data - "
                       << "Gyro: (" << imu.gyro[0] << ", " << imu.gyro[1] << ", " << imu.gyro[2] << "), "
                       << "Accel: (" << imu.accel[0] << ", " << imu.accel[1] << ", " << imu.accel[2] << "), "
